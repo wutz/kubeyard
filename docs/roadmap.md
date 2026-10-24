@@ -35,10 +35,12 @@
   - k3d 上已通过：Flux 安装、重复安装拒绝、添加 catalog 源（cosign 校验通过）、安装 nfd（状态识别为已安装）、重复安装拒绝、卸载（Kustomization、参数、HelmRelease、Helm release 与工作负载全部移除）。参数更新只写入 ConfigMap，因 catalog 内联 values 覆盖而不生效；修复已发布为 catalog v2026.10.4（k3d 上 nfd 2→1→3 生效）。
   - bz1-dev1 上：仅新增了 Flux 与 catalog 源（由本项目创建）。nfd、gpu-operator 等为非 Kubeyard 安装，只读检查完成，未修改。
   - bz1-dev1 上 forgeai 的手动卸载已执行：Project `forge-demo/demo`、forge-demo 的 5 个 Sandbox、forgeai CRD 与 RBAC 已删除。`forge-demo` 命名空间与 3 个 PVC（130Gi）因 Project 的 `deletionPolicy: Retain` 保留。
-  - forgeai 重装：chart 0.3.0 把 `command` 写死为 `/manager`，而发布镜像的入口是 `/ko-app/cmd`，控制器 CrashLoop。修复在 [wutz/forgeai#58](https://github.com/wutz/forgeai/pull/58)（已合并），发版 [chart 0.3.1](https://github.com/wutz/forgeai/releases/tag/v0.3.1)（[#59](https://github.com/wutz/forgeai/pull/59)）。bz1-dev1 已于 0.3.1 重新安装 forgeai（`helm install` 从 OCI，控制器 1/1 Running，镜像 `ghcr.io/wutz/forgeai:0.3.1`）。0.3.1 新增 CRD `inferenceservices.forgeai.wutz.dev`，catalog 的卸载警告目前只列出 `projects` CRD，需补全。
+  - forgeai 重装：chart 0.3.0 把 `command` 写死为 `/manager`，而发布镜像的入口是 `/ko-app/cmd`，控制器 CrashLoop。修复在 [wutz/forgeai#58](https://github.com/wutz/forgeai/pull/58)（已合并），发版 [chart 0.3.1](https://github.com/wutz/forgeai/releases/tag/v0.3.1)（[#59](https://github.com/wutz/forgeai/pull/59)）。bz1-dev1 已于 0.3.1 重新安装 forgeai（`helm install` 从 OCI，控制器 1/1 Running，镜像 `ghcr.io/wutz/forgeai:0.3.1`）。0.3.1 chart 不含 CRD `inferenceservices.forgeai.wutz.dev`；bz1-dev1 上曾出现的该 CRD 来源不明（与 0.3.1 安装同一分钟创建），已在第二轮卸载时删除。catalog 的卸载警告目前只列出 `projects` CRD，需补全 `fileservers`、`instancetypes`。
   - 发现：chart 的 CRD 带 `helm.sh/resource-policy: keep`，`helm uninstall` 后 CRD 保留，需手动清理。卸载 forgeai 时 Kubeyard 的警告应说明这一点。
+  - 第二轮升级、卸载测试（bz1-dev1）：`catalog-default` 强制协调，从 v2026.10.4（`sha256:49c4c8…`）升至 stable / v2026.10.5（`sha256:bdbbe84b…`），SourceVerified=True。`helm uninstall forgeai` 后 Deployment、Pod、ClusterRole 已移除；CRD 按 keep 策略保留，手动删除 projects、fileservers、instancetypes、inferenceservices（无 CR，无 finalizer）；agent-sandbox（agents.x-k8s.io）与 kueue 等 CRD 未动。重装 0.3.1（沿用同一 values），控制器 1/1 Running，4 个 InstanceType 由控制器重建。`helm upgrade` 同版本（revision 2，仅加 pod label 触发滚动更新）成功，`forgeai-platform` ConfigMap 内容不变。0.3.1 之上没有可升级的新 chart，因此升级测试只覆盖同版本原地升级，跨版本升级需等新 chart 发布。
+  - k3d 集群 `kubeyard-gui` 为干净状态（无 Flux、无 catalog 源），GUI 验证从头开始。
   - GUI 验证结果未提供。
-  - catalog 的 forgeai 与 agent-sandbox 条目已合并（[wutz/kubeyard-catalog#4](https://github.com/wutz/kubeyard-catalog/pull/4)），并以 `v2026.10.5` 发布；stable 指向该版本，cosign 校验通过，forgeai 为 chart 0.3.1。bz1-dev1 的 catalog 源仍为 v2026.10.4，将在下次 1h 协调时更新。
+  - catalog 的 forgeai 与 agent-sandbox 条目已合并（[wutz/kubeyard-catalog#4](https://github.com/wutz/kubeyard-catalog/pull/4)），并以 `v2026.10.5` 发布；stable 指向该版本，cosign 校验通过，forgeai 为 chart 0.3.1。bz1-dev1 的 catalog 源已于第二轮升至 v2026.10.5。
 
 ## M2 虚拟集群与资源池
 
