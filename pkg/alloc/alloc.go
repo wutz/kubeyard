@@ -15,6 +15,10 @@ import (
 type Lease struct {
 	Node    string
 	BoundAt time.Time
+	// Draining is set while the node is being emptied for another claim. It
+	// still counts toward its claim's size, but it is never a victim, never
+	// released again, and never free.
+	Draining bool
 }
 
 // Claim is one virtual cluster's claim on a pool.
@@ -51,6 +55,9 @@ type Plan struct {
 	Grant map[string][]string
 	// Preempt lists the bound nodes taken from lower-priority claims.
 	Preempt []Victim
+	// Release lists, by VC name, the nodes a claim gives up because it holds
+	// more than its Want. Released nodes are not granted in the same plan.
+	Release map[string][]string
 	// Shortfall is how many nodes each claim still lacks of its Want after
 	// granting and preempting.
 	Shortfall map[string]int
@@ -107,6 +114,7 @@ func Reconcile(free []string, claims []Claim) (Plan, error) {
 	ordered := byPriority(claims)
 	plan := Plan{
 		Grant:     map[string][]string{},
+		Release:   map[string][]string{},
 		Shortfall: map[string]int{},
 	}
 	pool := newNodeSet(free)
@@ -160,12 +168,40 @@ func Reconcile(free []string, claims []Claim) (Plan, error) {
 		}
 	}
 
+	// A claim above its Want gives back its newest releasable leases. Pinned and
+	// draining leases are kept. The caller picks which idle nodes to free when
+	// Want is lower because of idleness; this only enforces the count.
+	for _, c := range ordered {
+		releasable := releasableLeases(c)
+		for held[c.VC] > Want(c) && len(releasable) > 0 {
+			plan.Release[c.VC] = append(plan.Release[c.VC], releasable[0].Node)
+			releasable = releasable[1:]
+			held[c.VC]--
+		}
+	}
+
 	for _, c := range ordered {
 		if short := Want(c) - held[c.VC]; short > 0 {
 			plan.Shortfall[c.VC] = short
 		}
 	}
 	return plan, nil
+}
+
+// releasableLeases lists the leases a claim may give back, newest first.
+func releasableLeases(c Claim) []Lease {
+	pinned := map[string]bool{}
+	for _, n := range c.Pinned {
+		pinned[n] = true
+	}
+	var out []Lease
+	for _, l := range c.Current {
+		if !pinned[l.Node] && !l.Draining {
+			out = append(out, l)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].BoundAt.After(out[j].BoundAt) })
+	return out
 }
 
 func minOf(c Claim) int { return c.Min }
@@ -193,7 +229,7 @@ func victimOrder(claims []Claim) []candidate {
 			pinned[n] = true
 		}
 		for _, l := range c.Current {
-			if pinned[l.Node] {
+			if pinned[l.Node] || l.Draining {
 				continue
 			}
 			out = append(out, candidate{Node: l.Node, VC: c.VC, Prio: c.Priority, Excess: len(c.Current) - c.Min, BoundAt: l.BoundAt})
