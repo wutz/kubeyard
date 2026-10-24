@@ -50,6 +50,17 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toOverviewView(ov))
 }
 
+func (s *server) pools(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), loadTimeout)
+	defer cancel()
+	pv, err := loadPools(ctx, r.URL.Query().Get("context"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, pv)
+}
+
 func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), loadTimeout)
 	defer cancel()

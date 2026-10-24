@@ -69,6 +69,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(assets)))
 	mux.HandleFunc("GET /api/contexts", s.contexts)
 	mux.HandleFunc("GET /api/overview", s.overview)
+	mux.HandleFunc("GET /api/pools", s.pools)
 	mux.HandleFunc("GET /api/catalog", s.catalog)
 	mux.HandleFunc("POST /api/flux", s.installFlux)
 	mux.HandleFunc("POST /api/catalog-source", s.addSource)

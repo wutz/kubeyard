@@ -271,6 +271,24 @@ button, select, input { font: inherit; color: inherit; }
 
 .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 
+/* Resource pools */
+
+.pool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.pool { display: grid; gap: 12px; align-content: start; }
+.pool h2 { margin: 0; font-size: 16px; font-weight: 600; line-height: 24px; letter-spacing: -0.2px; }
+.pool .card-value { margin: 0; }
+.claims { display: grid; }
+.claims .section-title { margin-bottom: 4px; }
+.claim {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--hairline-soft);
+}
+.claim-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; overflow: hidden; }
+
 .card-label { color: var(--mute); font-size: 12px; }
 .card-value { margin: 6px 0 2px; font-size: 32px; font-weight: 600; line-height: 40px; letter-spacing: -1.28px; }
 .card-sub { color: var(--mute); font-size: 12px; }

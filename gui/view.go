@@ -1,9 +1,11 @@
 package main
 
 import (
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/wutz/kubeyard/pkg/api/v1alpha1"
 	"github.com/wutz/kubeyard/pkg/catalog"
 	"github.com/wutz/kubeyard/pkg/kube"
 )
@@ -63,6 +65,77 @@ func toOverviewView(ov kube.Overview) overviewView {
 			MemBytes:     n.MemBytes,
 			MemReqBytes:  n.MemReqBytes,
 		})
+	}
+	return out
+}
+
+// poolsView is the resource pool page. Installed is false when the cluster does
+// not serve NodePools, so the page explains the missing operator instead.
+type poolsView struct {
+	Installed bool       `json:"installed"`
+	Pools     []poolView `json:"pools"`
+}
+
+// poolView is one NodePool: the counts its status reports, and the virtual
+// clusters that claim it. Pools and claims are sorted by name.
+type poolView struct {
+	Name        string      `json:"name"`
+	DisplayName string      `json:"displayName"`
+	Total       int32       `json:"total"`
+	Free        int32       `json:"free"`
+	Reserved    int32       `json:"reserved"`
+	Unhealthy   int32       `json:"unhealthy"`
+	Claims      []claimView `json:"claims"`
+}
+
+// claimView is one virtual cluster's claim on a pool.
+type claimView struct {
+	VirtualCluster string `json:"virtualCluster"`
+	DisplayName    string `json:"displayName"`
+	Min            int32  `json:"min"`
+	Max            int32  `json:"max"`
+	Desired        int32  `json:"desired"`
+}
+
+// toPoolsView builds the resource pool page from the NodePools and the
+// VirtualClusters of a cluster. Claims on a pool that is not listed are dropped.
+func toPoolsView(installed bool, pools []v1alpha1.NodePool, vcs []v1alpha1.VirtualCluster) poolsView {
+	out := poolsView{Installed: installed, Pools: []poolView{}}
+	if !installed {
+		return out
+	}
+	index := make(map[string]int, len(pools))
+	for _, p := range pools {
+		index[p.Name] = len(out.Pools)
+		out.Pools = append(out.Pools, poolView{
+			Name:        p.Name,
+			DisplayName: p.Spec.DisplayName,
+			Total:       p.Status.Total,
+			Free:        p.Status.Free,
+			Reserved:    p.Status.Reserved,
+			Unhealthy:   p.Status.Unhealthy,
+			Claims:      []claimView{},
+		})
+	}
+	for _, vc := range vcs {
+		for _, c := range vc.Spec.PoolClaims {
+			i, ok := index[c.Pool]
+			if !ok {
+				continue
+			}
+			out.Pools[i].Claims = append(out.Pools[i].Claims, claimView{
+				VirtualCluster: vc.Name,
+				DisplayName:    vc.Spec.DisplayName,
+				Min:            c.Min,
+				Max:            c.Max,
+				Desired:        c.Desired,
+			})
+		}
+	}
+	sort.Slice(out.Pools, func(i, j int) bool { return out.Pools[i].Name < out.Pools[j].Name })
+	for i := range out.Pools {
+		claims := out.Pools[i].Claims
+		sort.Slice(claims, func(a, b int) bool { return claims[a].VirtualCluster < claims[b].VirtualCluster })
 	}
 	return out
 }

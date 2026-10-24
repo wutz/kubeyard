@@ -20,6 +20,11 @@ const state = {
   catalog: null,
   catalogError: '',
   catalogLoading: false,
+  // pools is the resource pool page; poolsAt is when it last loaded.
+  pools: null,
+  poolsError: '',
+  poolsLoading: false,
+  poolsAt: null,
   selectedAddon: '',
   // form holds the install form of one addon: its path-keyed fields.
   form: null,
@@ -38,6 +43,7 @@ const state = {
 // Sequence numbers drop responses that a newer request has overtaken.
 let overviewSeq = 0;
 let catalogSeq = 0;
+let poolsSeq = 0;
 
 const STATUS_LABEL = {
   installed: ['已安装', 'ok'],
@@ -124,6 +130,30 @@ async function refreshCatalog() {
   }
 }
 
+async function refreshPools() {
+  const name = state.selected;
+  if (!name) return;
+  const seq = ++poolsSeq;
+  state.poolsLoading = true;
+  renderContent();
+  try {
+    const view = await api('GET', `/api/pools?context=${encodeURIComponent(name)}`);
+    if (seq !== poolsSeq) return;
+    state.pools = view;
+    state.poolsError = '';
+    state.poolsAt = new Date();
+  } catch (err) {
+    if (seq !== poolsSeq) return;
+    state.pools = null;
+    state.poolsError = err.message;
+  } finally {
+    if (seq === poolsSeq) {
+      state.poolsLoading = false;
+      renderContent();
+    }
+  }
+}
+
 // write sends a cluster write for the selected context. A successful write
 // clears the install form, so the form starts again from what the cluster now
 // runs. A failed one keeps what the user typed.
@@ -158,6 +188,12 @@ function selectContext(name) {
   state.overviewError = '';
   state.catalog = null;
   state.catalogError = '';
+  // Drop a pools response still in flight for the previous context.
+  poolsSeq++;
+  state.pools = null;
+  state.poolsError = '';
+  state.poolsLoading = false;
+  state.poolsAt = null;
   state.selectedAddon = '';
   state.form = null;
   state.confirm = '';
@@ -166,6 +202,7 @@ function selectContext(name) {
   render();
   refreshOverview();
   if (state.page === 'catalog') refreshCatalog();
+  if (state.page === 'pools') refreshPools();
 }
 
 function setPage(page) {
@@ -173,6 +210,7 @@ function setPage(page) {
   state.confirm = '';
   render();
   if (page === 'catalog' && !state.catalog && !state.catalogLoading) refreshCatalog();
+  if (page === 'pools') refreshPools();
 }
 
 function selectAddon(name) {
@@ -186,6 +224,7 @@ function selectAddon(name) {
 
 function refreshCurrent() {
   if (state.page === 'overview') refreshOverview();
+  else if (state.page === 'pools') refreshPools();
   else refreshCatalog();
 }
 
@@ -331,6 +370,8 @@ function sidebar() {
     el('div', { class: 'brand' }, el('span', { class: 'logo' }, 'K'), 'Kubeyard'),
     el('div', { class: 'nav-group' }, '工作区'),
     navItem('overview', '概览'),
+    el('div', { class: 'nav-group' }, '资源'),
+    navItem('pools', '资源池'),
     el('div', { class: 'nav-group' }, '管理'),
     navItem('catalog', '组件'),
     el('div', { class: 'sidebar-foot' }, el('label', {}, '主题 ', themeSelect)),
@@ -380,7 +421,9 @@ function topbar() {
 
 function pageContent() {
   if (!state.selected) return emptyState();
-  return state.page === 'overview' ? overviewPage() : catalogPage();
+  if (state.page === 'overview') return overviewPage();
+  if (state.page === 'pools') return poolsPage();
+  return catalogPage();
 }
 
 function emptyState() {
@@ -433,9 +476,14 @@ function gpuPercent(ov) {
   return ov.gpuTotal > 0 ? Math.min(100, (ov.gpuRequested / ov.gpuTotal) * 100) : 0;
 }
 
+function meterBar(percent) {
+  const fill = el('span', {});
+  fill.style.width = `${percent}%`;
+  return el('div', { class: 'meter' }, fill);
+}
+
 function metricCard(label, value, sub, percent) {
-  const bar = percent === undefined ? null : el('div', { class: 'meter' }, el('span', {}));
-  if (bar) bar.firstChild.style.width = `${percent}%`;
+  const bar = percent === undefined ? null : meterBar(percent);
   return el(
     'div',
     { class: 'card' },
@@ -484,6 +532,87 @@ function nodeTable(nodes) {
         rows.length ? rows : el('tr', {}, el('td', { class: 'muted', colspan: cols.length }, '没有节点')),
       ),
     ),
+  );
+}
+
+// --- resource pools ----------------------------------------------------------
+
+// poolsPage is read-only: it shows what the NodePools and their claims say.
+// The operator does the allocation, so the page has no write actions.
+function poolsPage() {
+  const view = state.pools;
+  const head = pageHead(
+    '资源池',
+    view && view.installed ? `NodePool · ${state.selected}` : `集群 ${state.selected}`,
+    state.poolsAt ? el('span', { class: 'live' }, `更新于 ${fmtTime(state.poolsAt)}`) : null,
+  );
+  if (state.poolsError) return el('div', { class: 'stack' }, head, alert(state.poolsError, 'error'));
+  if (!view) return el('div', { class: 'stack' }, head, el('p', { class: 'muted' }, '加载中…'));
+  if (!view.installed) {
+    return el(
+      'div',
+      { class: 'stack' },
+      head,
+      el(
+        'div',
+        { class: 'empty' },
+        el('strong', {}, '未安装 Kubeyard operator'),
+        el('span', { class: 'muted small' }, '集群中没有 NodePool 资源（kubeyard.wutz.dev/v1alpha1），安装 kubeyard-operator 后资源池会出现'),
+      ),
+    );
+  }
+  const pools = list(view.pools);
+  if (!pools.length) {
+    return el(
+      'div',
+      { class: 'stack' },
+      head,
+      el(
+        'div',
+        { class: 'empty' },
+        el('strong', {}, '没有资源池'),
+        el('span', { class: 'muted small' }, '在 host 集群中创建 NodePool 后会出现'),
+      ),
+    );
+  }
+  return el(
+    'div',
+    { class: 'stack' },
+    head,
+    el('div', { class: 'pool-grid' }, pools.map(poolCard)),
+  );
+}
+
+function poolCard(p) {
+  const reservedPercent = p.total > 0 ? Math.min(100, (p.reserved / p.total) * 100) : 0;
+  const claims = list(p.claims);
+  return el(
+    'section',
+    { class: 'card pool' },
+    el('div', {}, el('h2', {}, p.displayName || p.name), el('div', { class: 'mono small muted' }, p.name)),
+    el('div', {}, el('div', { class: 'card-label' }, '空闲 / 总数'), el('div', { class: 'card-value' }, `${p.free} / ${p.total}`)),
+    meterBar(reservedPercent),
+    el('div', { class: 'card-sub' }, `保底占用 ${p.reserved} · 不健康 ${p.unhealthy}`),
+    el(
+      'div',
+      { class: 'claims' },
+      el('h3', { class: 'section-title' }, '虚拟集群声明'),
+      claims.length ? claims.map(claimRow) : el('span', { class: 'muted small' }, '没有虚拟集群声明此池'),
+    ),
+  );
+}
+
+function claimRow(c) {
+  return el(
+    'div',
+    { class: 'claim' },
+    el(
+      'span',
+      { class: 'claim-name' },
+      el('span', { class: 'mono' }, c.virtualCluster),
+      c.displayName ? el('span', { class: 'muted small' }, c.displayName) : null,
+    ),
+    el('span', { class: 'mono small muted' }, `min ${c.min} · max ${c.max} · desired ${c.desired}`),
   );
 }
 
