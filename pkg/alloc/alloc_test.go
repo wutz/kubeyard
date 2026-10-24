@@ -309,3 +309,71 @@ func TestReconcileVictimOrderPriorityThenExcessThenNewest(t *testing.T) {
 		t.Fatalf("preempt = %v, want the newest lease", plan.Preempt)
 	}
 }
+
+func TestReconcileReleasesNewestExcess(t *testing.T) {
+	plan, err := Reconcile(nil, []Claim{
+		{VC: "a", Priority: 1, Created: t0, Min: 0, Max: 3, Desired: 1, Current: []Lease{
+			{Node: "old", BoundAt: t0},
+			{Node: "new", BoundAt: t0.Add(time.Hour)},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Release["a"]; !reflect.DeepEqual(got, []string{"new"}) {
+		t.Fatalf("release = %v, want the newest lease only", got)
+	}
+	if len(plan.Grant) != 0 {
+		t.Fatalf("grant = %v, want none", plan.Grant)
+	}
+}
+
+func TestReconcileKeepsPinnedAndDraining(t *testing.T) {
+	plan, err := Reconcile(nil, []Claim{
+		{VC: "a", Priority: 1, Created: t0, Min: 0, Max: 3, Desired: 0, Pinned: []string{"p"}, Current: []Lease{
+			{Node: "p", BoundAt: t0},
+			{Node: "d", BoundAt: t0, Draining: true},
+			{Node: "x", BoundAt: t0.Add(time.Hour)},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Release["a"]; !reflect.DeepEqual(got, []string{"x"}) {
+		t.Fatalf("release = %v, want only x; pinned p and draining d stay", got)
+	}
+}
+
+func TestReconcileDrainingIsNotVictim(t *testing.T) {
+	plan, err := Reconcile(nil, []Claim{
+		{VC: "low", Priority: 1, Created: t0, Preemptible: true, Min: 0, Max: 1, Desired: 1, Current: []Lease{
+			{Node: "d", BoundAt: t0, Draining: true},
+		}},
+		{VC: "high", Priority: 5, Created: t0, Min: 0, Max: 1, Desired: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Preempt) != 0 {
+		t.Fatalf("preempt = %v, want none; a draining node is not a victim", plan.Preempt)
+	}
+	if got := plan.Shortfall["high"]; got != 1 {
+		t.Fatalf("high shortfall = %d, want 1", got)
+	}
+}
+
+func TestReconcileDrainingCountsTowardSize(t *testing.T) {
+	// A draining node still belongs to its claim, so the claim does not get a
+	// second node for its min from the free pool.
+	plan, err := Reconcile([]string{"f"}, []Claim{
+		{VC: "a", Priority: 5, Created: t0, Min: 1, Max: 1, Desired: 1, Current: []Lease{
+			{Node: "d", BoundAt: t0, Draining: true},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Grant) != 0 {
+		t.Fatalf("grant = %v, want none; the draining node counts toward min", plan.Grant)
+	}
+}
