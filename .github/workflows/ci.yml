@@ -31,7 +31,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev xvfb
 
       - name: Check formatting
         shell: bash
@@ -50,3 +50,19 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      # Starts the native window under a virtual display and checks that it
+      # serves the page and stays up. It does not inspect what the window shows.
+      - name: GUI window launches (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          go build -o kubeyard-gui ./gui
+          xvfb-run -a ./kubeyard-gui -addr 127.0.0.1:7791 > gui.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:7791/ -o page.html && break
+            sleep 1
+          done
+          grep -q 'kubeyard-token' page.html
+          sleep 5
+          pgrep -f kubeyard-gui > /dev/null || { cat gui.log; exit 1; }
+          pkill -f kubeyard-gui
