@@ -10,7 +10,7 @@
 - [x] 接受 mygo 1.0 前的风险
 - [x] 不引入租户实体，以虚拟集群为单位设计
 - [x] 普通用户 kubeconfig 不过期、可撤销
-- [ ] 设计 PR 合并
+- [x] 设计 PR 合并
 
 ## M1 连接与 catalog
 
@@ -30,7 +30,7 @@
 - [x] 参数更新：表单以集群中存储的参数为初值，只对 Kubeyard 管理的组件开放
 - [x] 一键安装 Flux：Helm SDK 从 OCI 拉取 flux-operator 0.61.0，再创建 FluxInstance；已有 Flux 时拒绝
 - [x] 添加 catalog 源：公钥随二进制嵌入，创建校验签名的 OCIRepository；源已存在或 Flux 未安装时不显示
-- [ ] 版本升级入口：目前 OCIRepository 跟随 stable tag 由 Flux 自动拉取，GUI 尚无单独操作
+- 版本升级不作为 GUI 操作：OCIRepository 跟随 stable tag 由 Flux 自动拉取（范围决定，见 catalog.md）
 - [ ] 写入路径的端到端验证：bz1-dev1 已有 Flux 与 catalog 源，安装 / 卸载 / 参数更新 / Flux 安装只有单元测试，尚未在集群上执行（需明确授权）
 
 ## M2 虚拟集群与资源池
