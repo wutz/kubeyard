@@ -1,0 +1,78 @@
+# 虚拟集群与资源池
+
+## 1. 形态选择
+
+虚拟 k8s 集群在"控制面是否独立"和"数据面节点是否独占"两个维度上有不同组合。参照 k3k 的划分：
+
+| 形态 | 控制面 | 工作负载节点 | 隔离强度 | Kubeyard |
+|---|---|---|---|---|
+| 共享模式（shared） | 每租户独立，Pod 形式跑在 host | 与其他租户共享 host 节点 | 弱（同节点内核、GPU 共享） | 路线图 |
+| 共享模式 + 独占节点 | 每租户独立，Pod 形式跑在 host | host 节点按租户划分，互不混用 | 中强（节点级隔离） | **v1（vcluster）** |
+| 虚拟模式（virtual） | 每租户独立 | 每租户独立的 k3s agent Pod 作为节点 | 中 | 路线图（k3k） |
+
+v1 只做"共享模式 + 独占节点"：控制面（api-server、syncer、etcd）以 Pod 形式跑在 host 的 `tenant-<name>` namespace；租户的 Pod 由 syncer 同步到 host，只能落在分配给它的节点上。GPU 集群多租户的主要诉求是"节点不混用、可计量、可伸缩"，这个形态以最小代价满足。
+
+### 两个实现的对应关系
+
+| | vcluster（v1） | k3k（路线图） |
+|---|---|---|
+| 模式字段 | 由 values 组合决定 | `Cluster.spec.mode`：`shared` / `virtual` / `hcp`，创建后不可改 |
+| 独占节点 | `sync.fromHost.nodes.selector.labels`：只同步匹配的 host 节点，同时把该 selector 作为 nodeSelector 注入同步到 host 的 Pod | `Cluster.spec.nodeSelector` + `VirtualClusterPolicy.defaultNodeSelector`；Policy 强制生效，租户改 Cluster 也放不宽 |
+| 策略对象 | 无，Kubeyard 用 VirtualCluster CR + 准入策略补齐 | `VirtualClusterPolicy`（cluster 级）：quota、limit、PSA 级别、允许的模式、网络策略开关 |
+| 安装 | `oci://ghcr.io/loft-sh/charts/vcluster`（Apache-2.0） | `https://rancher.github.io/k3k`，CRD 组 `k3k.io/v1beta1` |
+| 注意 | 同时有第三种 "private nodes"（外部机器直接加入 vcluster，自带 CNI/CSI），但需要 vCluster Platform（免费档即可），**Kubeyard 不依赖**，只用 OSS 能力 | `virtual` 模式下 agent Pod 在 host 上以 privileged 运行，不适合不可信租户，除非配合 `runtimeClassName: kata` |
+
+### 为什么 selector 不够
+
+vcluster 的 node selector 只负责"吸引"：让租户 Pod 落到自己的节点上，不能阻止其他 Pod 落到这些节点。所以 Kubeyard 额外做三件事：
+
+1. 节点打 `kubeyard.dev/tenant=<tenant>:NoSchedule` 污点，挡住其他租户与 host 上的普通负载
+2. vcluster 用 `sync.toHost.pods.enforceTolerations` 给本租户的 Pod 自动加上对应容忍
+3. host 侧 ValidatingAdmissionPolicy 拒绝 `tenant-*` namespace 中 nodeSelector / nodeName 不属于自己的 Pod（租户在虚拟集群里手写的 nodeSelector 与注入值的合并行为随版本变化，不能只靠 vcluster）
+
+字段名以 catalog 中固定的 vcluster 版本为准（调研时文档最新为 v0.36，k8s-in-action 当前用 0.27.0），实现阶段对固定版本跑一遍越界调度测试。
+
+## 2. vcluster 落地方式
+
+现有 k8s-in-action（`compute/vcluster/vcluster-demo`，chart 0.27.0）已经验证的做法：
+
+- 用 NFD `NodeFeatureRule` 按节点名打 `scclabs.dev/node-pool=<vcluster>` 标签
+- vcluster values 设置 `sync.fromHost.nodes.selector.labels`，虚拟集群只看到这些节点
+- `controlPlane.service`（MetalLB `loadBalancerIPs`）或 `controlPlane.ingress` 暴露 API，`exportKubeConfig.server` 写对外地址
+- `policies.networkPolicy`、`policies.limitRange`、`policies.resourceQuota` 由 chart 生成
+- etcd 3 副本 + 控制面 2 副本，控制面优先调度到 host 控制节点
+
+Kubeyard 的变化：
+
+| k8s-in-action 手工步骤 | Kubeyard |
+|---|---|
+| 编辑 NodeFeatureRule 列节点名 | NodePool（按 GPU 型号等标签选候选）+ NodeLease（operator 打 `kubeyard.dev/*` 标签与污点），不再依赖 NFD 规则做分配 |
+| 只靠 node selector 让虚拟集群"看见"节点 | 额外加污点 + 强制容忍 + host 侧准入策略，防止越界调度（见 [operator.md 第 2 节](operator.md#2-节点绑定机制独占节点)） |
+| 改 5 个文件里的名字 | VirtualCluster CR 一个对象，operator 渲染 HelmRelease |
+| `helmwave up` | Flux HelmRelease，chart 来自 catalog |
+| 手工 base64 解 Secret | GUI 导出 |
+
+Cilium 相关的 NetworkPolicy 经验（DNS / LB 流量需 ports-only 规则）保留到 vcluster addon 的默认 values 中。
+
+## 3. 扩缩容与 vcluster 的交互
+
+- 节点加入：NodeLease Bound → 节点打上 `kubeyard.dev/vcluster` 标签 → syncer 自动把节点同步进虚拟集群，租户侧 `kubectl get nodes` 立即可见
+- 节点移除：Draining 时先打 `kubeyard.dev/draining` 污点（同步进虚拟集群后，租户调度器不再往上放 Pod）→ 驱逐 → 摘标签后 syncer 将节点从虚拟集群移除
+- 租户在虚拟集群里看到的节点污点、标签由 syncer 决定，需要确认 draining 污点能被同步进去，以便 Kueue 等租户内调度器感知（实现阶段验证）
+
+## 4. provider 抽象
+
+operator 内部定义 provider 接口，v1 只实现 vcluster：
+
+```go
+type Provider interface {
+    // 根据 VirtualCluster 与当前分配渲染安装对象（HelmRelease 等）
+    Render(vc *v1alpha1.VirtualCluster, alloc Allocation) ([]client.Object, error)
+    // 从 provider 的状态中读出就绪情况、端点、kubeconfig Secret
+    Observe(ctx context.Context, vc *v1alpha1.VirtualCluster) (Status, error)
+    // 节点选择所需的 label key，用于 NodeLease 投影
+    NodeSelectorLabels(vc *v1alpha1.VirtualCluster) map[string]string
+}
+```
+
+k3k 接入时实现同一接口，`mode` 字段扩展为 `shared` / `virtual`。
