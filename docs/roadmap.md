@@ -59,6 +59,7 @@
 - [x] 分配算法（`pkg/alloc`）：期望值（§3.1）、准入不变量（§3.2）、分配与抢占顺序（§3.3），纯函数，有单元测试覆盖每条规则（[#14](https://github.com/wutz/kubeyard/pull/14)）
   - 待确认：§3.2 称 min 永远可满足，§3.3 只允许更低优先级抢占。当前实现对 min 缺口也只抢更低优先级的弹性节点，满足不了时体现为 Shortfall。若要求 min 优先于同级，需先修改 §3.3
 - [ ] kubeyard-operator host 模式：VirtualCluster、NodePool、NodeLease（operator 骨架、CRD、协调循环未开始）
+  - [x] API 类型与 scheme（`pkg/api/v1alpha1`）：三个 kind 与 `operator.md` §1 的示例 JSON 一致，DeepCopy 手写并有独立性测试。CRD manifest 与控制器未开始
 - vcluster 独占节点模式，手动 desired + pinnedNodes
 - 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）
 - GUI：虚拟集群、资源池页面，节点拖拽分配
