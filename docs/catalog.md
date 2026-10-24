@@ -137,7 +137,7 @@ Flux 已安装且集群中没有 `kubeyard-system/catalog-default` 时，GUI 显
 
 已由 Kubeyard 安装的组件可以"更新参数"。表单以集群中存储的参数为初值（来自 `addon-<name>-params` 的 `values.yaml`，以及 Kustomization 的 `postBuild.substitute`），因此保存时不会把已安装的值重置为默认值。更新只重写这两处，之后由 Flux 协调。
 
-**已知问题（修复待发布）：参数更新对 catalog 在 HelmRelease 中内联设置的键不生效。** Flux 中 `spec.values`（内联）优先于 `valuesFrom`，而线上 catalog 的 `manifests/release.yaml` 把 schema 暴露的键写在了 `spec.values` 里（如 nfd 的 `master.replicaCount: 2`），参数 ConfigMap 的修改因此被忽略。修复已在 catalog 本地分支验证：schema 暴露的键不再内联，参数由 ConfigMap 提供，nfd 在 k3d 上 2→1→3 随参数生效；`Render` 对表单留空的参数写入 schema 默认值，避免落到 chart 默认值上。在发布新的 catalog tag 之前，线上 catalog 仍有此问题，GUI 的"更新参数"不能保证生效。
+**已修复（v2026.10.4）：参数更新对 catalog 在 HelmRelease 中内联设置的键不生效。** Flux 中 `spec.values`（内联）优先于 `valuesFrom`，而线上 catalog 的 `manifests/release.yaml` 把 schema 暴露的键写在了 `spec.values` 里（如 nfd 的 `master.replicaCount: 2`），参数 ConfigMap 的修改因此被忽略。修复已在 catalog 本地分支验证：schema 暴露的键不再内联，参数由 ConfigMap 提供，nfd 在 k3d 上 2→1→3 随参数生效；`Render` 对表单留空的参数写入 schema 默认值，避免落到 chart 默认值上。`stable` 已指向 v2026.10.4。注意：升级后，早于 `Render` 修复安装的组件，若参数 ConfigMap 缺少某个键，会在下次协调时落到 chart 默认值。在这些组件上重新保存参数即可写入 schema 默认值。
 
 版本升级不由 GUI 单独触发：OCIRepository 跟随 `stable` tag，新版本发布后 Flux 自动拉取。
 
