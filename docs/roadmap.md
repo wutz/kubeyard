@@ -74,12 +74,17 @@
   - 2026-10-25 本地 k3d 实测（operator 二进制在宿主机运行，webhook 配置用 `url` 指向 `host.k3d.internal:9443`）：`min=2` 的 VC 在 1 节点池上被拒（"各虚拟集群 min 之和 3 超过健康节点数 1"）；仍持有 Bound 租约的 VC 删除被拒；valuesOverride 写 `sync.fromHost.nodes` 被拒；把已租出的节点移出 NodePool 选择器被拒；合法的 VC（min=1）与 NodePool 创建放行；按拒绝信息把 min/desired 调 0 后租约 Draining → 释放，随后删除放行。operator 日志无错误。
   - 未验证：bz1-dev1 上的运行（只读，未部署）；多节点与 GPU 节点的真实分配；集群内部署形态（Service + 容器内证书目录）未经真实安装验证，只在宿主机上验证了同样的代码路径。
 - vcluster 独占节点模式，手动 desired + pinnedNodes
-- [ ] 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）：后端已完成，GUI 页面与 vcluster 生成 Secret 未完成
+- [x] 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）：后端与 GUI 页面已完成，vcluster 生成 Secret 未完成
   - [x] `pkg/kube`：从 `status.adminKubeconfigSecretRef` 读取 Secret 的键；未生成、键缺失、值为空都报错；导出前必须写入审计 Event（`AdminKubeconfigExported`，写在 `default` 命名空间，因为 VirtualCluster 是 cluster 级对象）。单元测试 7 个。
   - [x] `POST /api/virtualclusters/{name}/admin-kubeconfig`：需要 `confirm` 与名称一致，响应 `Cache-Control: no-store`，审计 Event 写入失败时不返回凭证。测试覆盖 token 与确认。
   - 2026-10-25 本地 k3d 实测：手动创建 Secret 与 status 引用，GUI headless 运行。未确认返回 400；确认后返回 200 与 kubeconfig，审计 Event 写入，`Cache-Control: no-store`。实测中发现并修复：最初把 Event 写入宿主命名空间，API 因 involvedObject 为 cluster 级对象而拒绝（失败时正确地返回 502，且不返回凭证）。
-  - 未完成：vcluster 尚未由 operator 生成 admin Secret，因此端到端只能用手动 Secret 验证；GUI 的虚拟集群页面与"以该 VC 管理员身份打开"未实现；轮换注解未实现。
+  - 未完成：vcluster 尚未由 operator 生成 admin Secret，因此端到端只能用手动 Secret 验证；"以该 VC 管理员身份打开"未实现。
+  - 轮换注解（范围决定，未实现）：`docs/operator.md` §4.1 把 kubeconfig 失效交给 vcluster 自己的证书轮换行为，注释为"版本相关，实现阶段核实"。host 模式不渲染也不安装 vcluster values，写一个没有消费者的注解就是假功能，因此页面只提供导出，不提供轮换按钮。等 render 链路落地再按 vcluster 版本核实语义。
 - GUI：虚拟集群、资源池页面，节点拖拽分配
+  - [x] 资源池页（`GET /api/pools`）：每个池的 total / free / reserved / unhealthy 与该池上的 VC 声明，池与声明按名称排序；未安装 operator 时说明原因。
+  - [x] 虚拟集群页（`GET /api/virtualclusters`，[#26](https://github.com/wutz/kubeyard/pull/26)）：列表按优先级从高到低；卡片显示持有节点数、阶段、优先级 / 是否可抢占、每个池声明的 min/max/desired；点开详情显示 provider、版本、对外地址（Ingress 带 7443）、节点分配表、条件，以及导出管理员 kubeconfig 的两步确认。阶段文案映射 Pending/Provisioning/Ready/Degraded/Draining/Deleting → 等待/创建中/就绪/降级/回收中/删除中。JSON 字段由测试逐个断言，空列表输出 `[]` 而不是 `null`。
+  - 2026-10-25 浏览器实测（k3d context，深色与浅色两套主题）：4 个 VC 按优先级 10 → 5 → 3 → 1 排列，vc-demo 卡片点开详情，对外地址显示 `Ingress · vc-demo.example.com:7443`，未分配节点时表格显示"还没有分配节点"；导出按钮先变成"确认导出 vc-demo 的管理员 kubeconfig"，确认后出现成功提示与 kubeconfig 内容，"下载文件"生成 `application/yaml` 的 64 字节 blob；切换 context 后已导出的内容被清空。只读的 bz1-dev1（不写任何东西）上页面显示"未安装 Kubeyard operator"空状态。
+  - 未完成：节点拖拽分配；页面没有"以该 VC 管理员身份打开"（M5）；窄屏下侧边栏不折叠（375px 视口出现横向滚动），随 GUI 整体响应式一起处理。
 
 ## M3 弹性与抢占
 
