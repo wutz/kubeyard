@@ -62,7 +62,7 @@
 - [x] NodePool 状态计算（`pkg/pool`）：total / free / reserved / unhealthy；空选择器与非法选择器拒绝，有单元测试
 - [x] 分配算法（`pkg/alloc`）：期望值（§3.1）、准入不变量（§3.2）、分配与抢占顺序（§3.3），纯函数，有单元测试覆盖每条规则（[#14](https://github.com/wutz/kubeyard/pull/14)）
   - 待确认：§3.2 称 min 永远可满足，§3.3 只允许更低优先级抢占。当前实现对 min 缺口也只抢更低优先级的弹性节点，满足不了时体现为 Shortfall。若要求 min 优先于同级，需先修改 §3.3
-- [ ] kubeyard-operator host 模式：VirtualCluster、NodePool、NodeLease（准入 webhook 未完成）
+- [x] kubeyard-operator host 模式：VirtualCluster、NodePool、NodeLease
   - [x] API 类型与 scheme（`pkg/api/v1alpha1`）：三个 kind 与 `operator.md` §1 的示例 JSON 一致，DeepCopy 手写并有独立性测试。
   - [x] CRD manifest（`deploy/crds/`，[#20](https://github.com/wutz/kubeyard/pull/20)）：字段与枚举由测试对齐 Go 类型；§1 的三个示例 CR 在本地 k3d 上 server-side dry-run 通过。
   - [x] 协调循环（`pkg/operator/host`，[#17](https://github.com/wutz/kubeyard/pull/17)）与入口（`cmd/kubeyard-operator --mode=host`）：计算 NodePool.status，按 §3 分配，写 NodeLease、节点 VC 标签 / pool 标签 / NoSchedule taint（§2），回写 VC allocations。`--mode=vcluster` 明确报错，未实现。RBAC 在 `deploy/operator/rbac.yaml`。
@@ -70,7 +70,9 @@
   - [x] drain 步骤（`pkg/operator/host/drain.go`，§3.4 步骤 1、3、4、5）：被抢占或被释放的节点先加 `kubeyard.wutz.dev/draining:NoSchedule`；宽限期结束后用 Eviction API 驱逐旧 VC 在 `vc-<name>` 中的 Pod（受 PDB 约束，被拒绝则下一轮重试）；到 drain 截止时间（宽限期 + drainTimeout）强制删除；节点清空后，被抢占的节点移交给申请者（lease Bound，标签与 taint 换成新 VC），被释放的节点解绑并删除 lease。单元测试 4 个，覆盖宽限期、驱逐后移交、PDB 阻塞后强制删除、释放后解绑再分配。
   - 2026-10-25 本地 k3d 实测（真实 API，operator 二进制以 admin kubeconfig 运行）：抢占，无 PDB，宽限期 30s 后 Pod 被驱逐，节点在 t+31s 移交给 high；PDB `minAvailable: 1` 时驱逐被拒绝，Pod 保留到截止时间（30s + 90s）后被强制删除，节点移交给 top；释放 top 后节点解绑，分配器随即按优先级把节点给了 high（而不是 low）。operator 日志无错误。
   - 已知缺口：§3.4 步骤 2（向受害 VC 发 Event 与 `Preempting` 条件）未实现，归 M3；释放的租约直接删除，未写 UsageReport（§1），归 M4；`--mode=vcluster` 未实现；draining 节点每 10 秒轮询一次，不监听 Pod 事件。
-  - 未验证：bz1-dev1 上的运行（只读，未部署）；多节点与 GPU 节点的真实分配；准入 webhook（§3.2）。
+  - [x] 准入 webhook（`pkg/webhook`，§3.2、§7）：VirtualCluster 校验 `sum(min) ≤ total − unhealthy`、`min ≤ desired ≤ max`（开启 autoscale 时跳过）、pinnedNodes 存在且匹配选择器、每个节点只被一个 VC pin、poolClaim 的 pool 不重复且存在，valuesOverride 不得触碰 `sync.fromHost.nodes` 与 `sync.toHost.pods`（§2 保留路径），仍持有租约的 VC 拒绝删除；NodePool 校验选择器非空且合法、不与其它池重叠、不把已租出的节点移出选择器。证书自签发（ECDSA P-256，本地 CA + 服务证书，30 天内到期或名字不全时重签），启动时把 CA 写入 `kubeyard-validating` 的 caBundle，不依赖 cert-manager。准入判断直读 API 而非缓存，避免用旧缓存放过超额申请。单元测试 30 个。
+  - 2026-10-25 本地 k3d 实测（operator 二进制在宿主机运行，webhook 配置用 `url` 指向 `host.k3d.internal:9443`）：`min=2` 的 VC 在 1 节点池上被拒（"各虚拟集群 min 之和 3 超过健康节点数 1"）；仍持有 Bound 租约的 VC 删除被拒；valuesOverride 写 `sync.fromHost.nodes` 被拒；把已租出的节点移出 NodePool 选择器被拒；合法的 VC（min=1）与 NodePool 创建放行；按拒绝信息把 min/desired 调 0 后租约 Draining → 释放，随后删除放行。operator 日志无错误。
+  - 未验证：bz1-dev1 上的运行（只读，未部署）；多节点与 GPU 节点的真实分配；集群内部署形态（Service + 容器内证书目录）未经真实安装验证，只在宿主机上验证了同样的代码路径。
 - vcluster 独占节点模式，手动 desired + pinnedNodes
 - [ ] 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）：后端已完成，GUI 页面与 vcluster 生成 Secret 未完成
   - [x] `pkg/kube`：从 `status.adminKubeconfigSecretRef` 读取 Secret 的键；未生成、键缺失、值为空都报错；导出前必须写入审计 Event（`AdminKubeconfigExported`，写在 `default` 命名空间，因为 VirtualCluster 是 cluster 级对象）。单元测试 7 个。
