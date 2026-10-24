@@ -14,7 +14,7 @@
 
 ## 核心组件
 
-- **Kubeyard GUI**：基于 [mygo](https://github.com/egoist/mygo) native UI 的桌面客户端，直接用 kubeconfig 访问 API Server，无需额外服务端
+- **Kubeyard GUI**：基于系统 webview（[webview_go](https://github.com/webview/webview_go)）的桌面客户端，Go 进程内提供本地页面与 API，直接用 kubeconfig 访问 API Server，无需额外服务端
 - **kubeyard-operator**：在集群内协调虚拟集群、节点租约、抢占、计量与用户空间（API Group `kubeyard.wutz.dev`）
 - **kubeyard-catalog**：以签名 OCI artifact 发布到 GHCR 的 Flux 组件目录，默认源基于 [k8s-in-action](https://github.com/wutz/k8s-in-action)，其他组织可发布自己的源
 

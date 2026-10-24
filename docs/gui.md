@@ -70,32 +70,49 @@
 
 - 列表页使用 watch（informer）而非轮询；概览页的聚合指标每 8 秒刷新一次，和截图一致
 - Flux / operator 的 conditions 原样展示，同时提供"最近事件"抽屉
+- 当前实现（M1）：概览页每 8 秒轮询，组件页在切换上下文与点击刷新时加载；informer 与列表 watch 留作后续改进
 
 ## 5. 技术栈
 
-选型：[mygo](https://github.com/egoist/mygo) native UI（MIT）。纯 Go，不使用 HTML / JS / webview，UI 由 mygo 自绘：macOS 12+ 用 Metal，Windows 10/11 用 Direct3D 11，Linux 用 GTK 3。不依赖 cgo，可以交叉编译。
+前端用系统 webview 承载，业务逻辑全部在 Go 侧。进程内启动一个只监听 `127.0.0.1` 的 HTTP 服务，页面（`gui/web/`，原生 HTML / CSS / JS，无构建步骤）与 JSON API 都由它提供；[webview_go](https://github.com/webview/webview_go) 打开一个指向该地址的原生窗口：
 
-选它的理由：
+- macOS：WKWebView
+- Windows：WebView2（需要运行时，Windows 10/11 通常已预装）
+- Linux：WebKitGTK
 
-- GUI 与 operator 同为 Go，直接复用 `client-go`、`controller-runtime` 的 typed client、CRD 类型（`pkg/`）与 Flux API 包，不需要 IPC 或生成 TS 类型
-- 组件覆盖本项目所需：sidebar、table（虚拟化行）、list、tabs、dialog / alert-dialog、form、select / combobox、progress / meter、chart、toast、code-editor（YAML 预览）、diff-viewer（升级前后 values 对比）、drag-and-drop（节点拖拽分配）
-- 自带打包与分发：macOS app + DMG（签名、公证），Windows 安装包，deb，签名的自动更新（支持增量）
-- 深色模式：`mygo.Theme` 跟随系统，对应 DESIGN.md 的浅 / 深两套 token
+API 直接用 `pkg/kube`、`pkg/catalog` 访问 API Server，与 operator 共用同一套业务代码，没有额外的后端服务。
 
-编程模型与 k8s 集成：
+编程模型：
 
-- view 是"状态 → UI"的 Go 函数，事件处理直接改状态，mygo 在下一帧前重建变化的部分
-- informer / watch 跑在后台 goroutine，结果通过 `Window.Update(func(){...})` 回到主线程写入状态；耗时调用（安装、导出、dry-run）一律放后台，界面只显示进度
-- 每个 context 一个 `ClusterSession`：持有 rest.Config、dynamic client、按需启动的 informer（只 watch 当前页面需要的资源，切页面停掉），断线自动重连
-- headless view 测试用于页面级单元测试
+- 页面状态保存在一个 JS 对象里，`render()` 按状态重建 DOM；DOM 只用 `el()` 构造，不使用 `innerHTML`
+- 概览页每 8 秒刷新，只重绘内容区；安装 Flux、安装、更新参数、卸载需要二次点击确认；添加 catalog 源为单击。写操作成功后刷新概览与组件页
+- 写操作在服务端串行执行（进程内互斥锁），每次执行前重新读取集群状态并校验 catalog 守卫（可安装、可更新、可卸载、托管），页面上的按钮状态只是提示
+- 每个请求带超时：读取 15 秒，写入 30 秒
+
+安全：
+
+- 每次启动生成 32 字节随机 token，写进页面的 `<meta>`；所有 `/api/` 请求必须带 `X-Kubeyard-Token`，缺失或错误返回 401
+- Host 白名单（只接受 `127.0.0.1:<port>` 与 `localhost:<port>`），防止 DNS rebinding 把外部页面带进本地服务
+- 响应带 `Content-Security-Policy`（只允许同源脚本与样式）与 `X-Frame-Options: DENY`
+- 服务只绑定回环地址，不对局域网开放
+
+深色模式：CSS 变量跟随 `prefers-color-scheme`，侧边栏可手动切换"跟随系统 / 浅色 / 深色"，两套 token 对应 DESIGN.md。
+
+调试：
+
+- `go run ./gui -headless` 只启动服务并打印地址，用浏览器打开即可测试页面，也便于脚本化测试 API
+- `-debug` 打开 webview 的开发者工具
+- `-addr` 指定监听地址（默认 `127.0.0.1:0`，随机端口）
+
+构建要求：webview_go 使用 cgo，本地构建需要 C 编译器（macOS 为 Xcode Command Line Tools，Linux 为 `libwebkit2gtk-4.1-dev` 等）。`pkg/` 不依赖 webview，operator 仍可纯 Go 构建。
 
 风险与对策：
 
 | 风险 | 说明 | 对策 |
 |---|---|---|
-| 框架年轻（已接受） | 2026-10 时最新为 v0.6.3，尚未 1.0，迭代很快 | `go.mod` 固定版本，升级单独提 PR；UI 层与业务层（`ClusterSession`、catalog、导出逻辑）严格分离 |
-| 工具链要求高 | `go.mod` 声明 `go 1.27.1` | 项目统一 Go 1.27+，CI 同版本；`pkg/` 保持不依赖 mygo，供 operator 使用 |
-| 组件细节不满足 | 例如大表格排序、拖拽交互 | 优先用 `custom-widgets` 扩展；M1 用概览页与节点表格做技术验证 |
-| 兜底 | M1 验证失败时 | 退回 mygo 的 web frontend 模式（同一框架、`Bind` + 生成 TS client），业务层无需改动 |
+| cgo 构建 | 交叉编译与 CI 需要对应平台的 C 工具链 | GUI 与 operator 分开构建；`pkg/` 不依赖 cgo |
+| 平台 webview 差异 | WKWebView、WebView2、WebKitGTK 的 CSS / JS 支持略有不同 | 页面只用 Geist 系统字体栈与稳定的 CSS 特性；每个平台发版前手动验证 |
+| 本地服务被攻击 | 同机其他进程或网页可能访问回环端口 | token、Host 白名单、CSP、只绑回环；写操作服务端再校验 |
+| 页面与 Go 类型不一致 | JSON 结构手写 | DTO 集中在 `gui/view.go`，有单元测试覆盖关键字段 |
 
 关于参考对象：截图中"任务 / 沙箱 / 模板 / 存储卷 / 镜像"等导航来自 NeoGPU 控制台，Kube Studio 公开文档只覆盖集群创建、连接、扩容与监控。这里只借鉴截图的布局与视觉风格，功能范围以本文第 2 节为准。

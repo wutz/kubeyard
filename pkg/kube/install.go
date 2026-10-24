@@ -22,6 +22,10 @@ const (
 	CatalogSource = "catalog-default"
 	// addonLabel names the addon an object belongs to.
 	addonLabel = "kubeyard.wutz.dev/addon"
+	// watchLabel asks Flux to reconcile the HelmRelease that reads a ConfigMap
+	// when the ConfigMap changes, so a parameter update applies without waiting
+	// for the next interval.
+	watchLabel = "reconcile.fluxcd.io/watch"
 )
 
 var kustomizations = schema.GroupVersionResource{
@@ -56,7 +60,7 @@ func Install(ctx context.Context, cs kubernetes.Interface, dc dynamic.Interface,
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      paramsName(a.Name),
 			Namespace: CatalogNamespace,
-			Labels:    map[string]string{addonLabel: a.Name},
+			Labels:    map[string]string{addonLabel: a.Name, watchLabel: "Enabled"},
 		},
 		Data: map[string]string{"values.yaml": string(values)},
 	}
@@ -170,6 +174,9 @@ func upsertObject(ctx context.Context, client dynamic.ResourceInterface, obj *un
 		return err
 	}
 	obj.SetResourceVersion(cur.GetResourceVersion())
+	// Flux adds its finalizer after reconciling. The update replaces the whole
+	// object, so keep it; without it, deleting the object skips the prune.
+	obj.SetFinalizers(cur.GetFinalizers())
 	_, err = client.Update(ctx, obj, metav1.UpdateOptions{})
 	return err
 }
