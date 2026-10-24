@@ -64,7 +64,11 @@
   - [x] CRD manifest（`deploy/crds/`）：字段与枚举由测试对齐 Go 类型；在本地 k3d 上 server-side dry-run 通过，§1 的三个示例 CR 通过 schema 校验（未持久化到任何集群）。
   - [ ] 协调循环：`pkg/operator/host` 对单个 NodePool 计算状态、运行分配、写 NodeLease 与节点标签 / taint、回写 VC allocations（[#17](https://github.com/wutz/kubeyard/pull/17)）。drain 步骤与 `cmd/kubeyard-operator --mode=host` 未完成。
 - vcluster 独占节点模式，手动 desired + pinnedNodes
-- 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）
+- [ ] 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）：后端已完成，GUI 页面与 vcluster 生成 Secret 未完成
+  - [x] `pkg/kube`：从 `status.adminKubeconfigSecretRef` 读取 Secret 的键；未生成、键缺失、值为空都报错；导出前必须写入审计 Event（`AdminKubeconfigExported`，写在 `default` 命名空间，因为 VirtualCluster 是 cluster 级对象）。单元测试 7 个。
+  - [x] `POST /api/virtualclusters/{name}/admin-kubeconfig`：需要 `confirm` 与名称一致，响应 `Cache-Control: no-store`，审计 Event 写入失败时不返回凭证。测试覆盖 token 与确认。
+  - 2026-10-25 本地 k3d 实测：手动创建 Secret 与 status 引用，GUI headless 运行。未确认返回 400；确认后返回 200 与 kubeconfig，审计 Event 写入，`Cache-Control: no-store`。实测中发现并修复：最初把 Event 写入宿主命名空间，API 因 involvedObject 为 cluster 级对象而拒绝（失败时正确地返回 502，且不返回凭证）。
+  - 未完成：vcluster 尚未由 operator 生成 admin Secret，因此端到端只能用手动 Secret 验证；GUI 的虚拟集群页面与"以该 VC 管理员身份打开"未实现；轮换注解未实现。
 - GUI：虚拟集群、资源池页面，节点拖拽分配
 
 ## M3 弹性与抢占
