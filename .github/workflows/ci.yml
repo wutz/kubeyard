@@ -51,8 +51,8 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # Starts the native window under a virtual display and checks that it
-      # serves the page and stays up. It does not inspect what the window shows.
+      # Starts the native window and checks that it serves the page and stays up.
+      # It does not inspect what the window shows.
       - name: GUI window launches (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -66,3 +66,34 @@ jobs:
           sleep 5
           pgrep -f kubeyard-gui > /dev/null || { cat gui.log; exit 1; }
           pkill -f kubeyard-gui
+
+      - name: GUI window launches (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          go build -o kubeyard-gui ./gui
+          ./kubeyard-gui -addr 127.0.0.1:7791 > gui.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:7791/ -o page.html && break
+            sleep 1
+          done
+          grep -q 'kubeyard-token' page.html
+          sleep 5
+          kill -0 "$pid" || { cat gui.log; exit 1; }
+          kill "$pid"
+
+      - name: GUI window launches (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          go build -o kubeyard-gui.exe ./gui
+          $p = Start-Process -FilePath ./kubeyard-gui.exe -ArgumentList '-addr', '127.0.0.1:7791' -PassThru -RedirectStandardError gui.err
+          $page = $null
+          for ($i = 0; $i -lt 30 -and -not $page; $i++) {
+            try { $page = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7791/).Content } catch { Start-Sleep -Seconds 1 }
+          }
+          if ($page -notmatch 'kubeyard-token') { exit 1 }
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { Get-Content gui.err; exit 1 }
+          Stop-Process -Id $p.Id
