@@ -37,9 +37,10 @@
   - 发现并修复：参数 ConfigMap 未带 Flux 的 `reconcile.fluxcd.io/watch=Enabled` 标签，参数更新要等 Kustomization / HelmRelease 的 10 分钟间隔才生效（手动 reconcile 即时生效）。现在安装与更新都写入该标签，k3d 上更新约 5 秒生效，由 `TestInstallLabelsParamsForFluxWatch` 覆盖。
   - 发现并修复：Kubeyard 更新 Kustomization 时整对象 Update 会丢掉 Flux 的 `finalizers.fluxcd.io`，之后卸载会跳过 prune，HelmRelease 与工作负载残留（2026-10-24 在 k3d 复现：卸载后 HelmRelease 仍被协调，参数 ConfigMap 已删，Helm 回退为 chart 默认值）。修复：更新时保留现有 finalizer，由 `TestInstallKeepsFluxFinalizer` 覆盖。修复后同一流程（安装 → 更新 → 卸载）在 k3d 上 20 秒内 prune 全部对象，重装后恢复 Ready。
   - 观察：卸载后 `nfd` namespace 仍保留，未调查原因。
-  - 原生窗口冒烟（macOS，2026-10-24）：非 headless 启动后窗口标题 Kubeyard、尺寸 1120×720 出现，WebKit 网络进程连接本地服务并发起请求，页面加载。首次启动时 WebKit 未发起任何连接，重启后正常，原因未查。
+  - 原生窗口（2026-10-24）：macOS 本机非 headless 启动后窗口标题 Kubeyard、尺寸 1120×720 出现，WebKit 网络进程连接本地服务并加载页面。本机截屏为黑屏（未授予屏幕录制权限），因此当时未目视确认。
+  - 原生窗口 CI 检查（[#9](https://github.com/wutz/kubeyard/pull/9)、[#10](https://github.com/wutz/kubeyard/pull/10)、[#11](https://github.com/wutz/kubeyard/pull/11)）：ubuntu-22.04（xvfb）、macOS、Windows 三个 runner 上均启动 GUI 窗口，本地服务返回带 token 的页面，进程保持运行，并截屏上传。截屏显示 Kubeyard 侧边栏、概览 / 组件导航与"未找到 kubeconfig context"空状态；Linux 截屏中的中文显示为方框，是 runner 缺少中文字体，不是应用问题。
+  - 未验证：窗口内显示真实数据（概览的节点与虚拟集群数）。CI 没有 kubeconfig，只覆盖空状态；数据路径已在 k3d 上通过 API 与浏览器页面验证，但没有在原生窗口里验证。M1 关闭前需补齐这一项。
   - CI（[#7](https://github.com/wutz/kubeyard/pull/7)）：ubuntu-22.04、macOS、Windows 上 gofmt、vet、build、test 全部通过，GUI 的 cgo 构建包含在内。Windows 首次失败是 checkout 的 CRLF 让 gofmt 报错，已用 `.gitattributes` 固定 LF 修复。这三项已设为 main 的必需检查。
-  - 未验证：窗口内的页面内容未目视确认（运行环境未授予屏幕录制权限，截屏为黑屏，需用户授权后补做）；Windows / Linux 上的窗口运行未验证，只验证了构建与测试。M1 关闭前需补齐这两项。
   - k3d 上已通过：Flux 安装、重复安装拒绝、添加 catalog 源（cosign 校验通过）、安装 nfd（状态识别为已安装）、重复安装拒绝、卸载（Kustomization、参数、HelmRelease、Helm release 与工作负载全部移除）。参数更新只写入 ConfigMap，因 catalog 内联 values 覆盖而不生效；修复已发布为 catalog v2026.10.4（k3d 上 nfd 2→1→3 生效）。
   - bz1-dev1 上：仅新增了 Flux 与 catalog 源（由本项目创建）。nfd、gpu-operator 等为非 Kubeyard 安装，只读检查完成，未修改。
   - bz1-dev1 上 forgeai 的手动卸载已执行：Project `forge-demo/demo`、forge-demo 的 5 个 Sandbox、forgeai CRD 与 RBAC 已删除。`forge-demo` 命名空间与 3 个 PVC（130Gi）因 Project 的 `deletionPolicy: Retain` 保留。
