@@ -47,6 +47,38 @@ func setPath(m map[string]any, keys []string, v any) {
 	m[keys[len(keys)-1]] = v
 }
 
+// Current returns the form values that Render turned into helm and substitute,
+// keyed by parameter path. A parameter the install did not store is left out,
+// so its form field starts at the schema default.
+func (a Addon) Current(helm map[string]any, substitute map[string]string) map[string]any {
+	out := map[string]any{}
+	for _, p := range a.Params {
+		if p.Target == TargetSubstitute {
+			if s, ok := substitute[p.Path]; ok {
+				out[p.Path] = s
+			}
+			continue
+		}
+		if v, ok := getPath(helm, strings.Split(p.Path, ".")); ok {
+			out[p.Path] = v
+		}
+	}
+	return out
+}
+
+// getPath returns the value at the nested key path, if every key is present.
+func getPath(m map[string]any, keys []string) (any, bool) {
+	for _, k := range keys[:len(keys)-1] {
+		next, ok := m[k].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		m = next
+	}
+	v, ok := m[keys[len(keys)-1]]
+	return v, ok
+}
+
 // Statuses returns the status of every addon in the catalog, keyed by name.
 func (c *Catalog) Statuses(has func(kind, namespace, name string) bool) map[string]Status {
 	out := make(map[string]Status, len(c.Addons))

@@ -120,9 +120,28 @@ addon 自己的 HelmRelease（`helm.toolkit.fluxcd.io/v2`）用 `valuesFrom` 引
 - 安装：只有状态为"未安装"才允许。已安装、已存在（有 Deployment / DaemonSet 但无 Helm release，即非 Kubeyard 安装）、无法判断的组件都拒绝；每个依赖必须已安装或已存在。
 - 卸载：只允许 Kubeyard 管理的组件（即存在 `addon-<name>` Kustomization）。被其他已安装 / 已存在组件依赖时拒绝，需先卸载依赖方。
 
-"无法判断"指健康检查只有 Kustomization 或 CRD 等无法用 Helm release / 工作负载查询的对象。这类组件（如 gateway-api-crds）不会被当作未安装，依赖它的组件因此也无法安装，直到补上 CRD 检测。
+健康检查支持两类对象：`HelmRelease`（按 release 名判断已安装；同名 Deployment / DaemonSet 存在则为已存在）和 `CustomResourceDefinition`（CRD 存在即为已存在，集群级对象，namespace 留空）。只有 Kustomization 这类无法用 Helm release、工作负载或 CRD 查询的对象才会得到"无法判断"，此时拒绝安装。
 
-Flux 本身用 [flux-operator](https://github.com/controlplaneio-fluxcd/flux-operator) 安装：GUI apply operator 的 chart 后创建一个 `FluxInstance`（`flux-system/flux`），升级 Flux 只改这个对象，不用 shell 调 `flux bootstrap`。v1 的 addon 仍用上面的 Kustomization + ConfigMap，只依赖 Flux 核心 API，作者门槛更低；若后续需要"同一 addon 按虚拟集群批量实例化"，再评估切换到 flux-operator 的 ResourceSet。具体版本在 M1 从各 releases 页面锁定。
+卸载 gateway-api-crds 会删除集群中全部 Gateway API 资源。守卫只检查目录中声明的依赖（如 istio），GUI 目前不对此额外提醒，卸载前需要自行确认。
+
+### 添加 catalog 源
+
+Flux 已安装且集群中没有 `kubeyard-system/catalog-default` 时，GUI 显示"添加 catalog 源"。它创建两个对象：
+
+- Secret `catalog-default-cosign-pub`，其 `cosign.pub` 字段是随 Kubeyard 嵌入的公钥（`pkg/kube/cosign.pub`，是 catalog 仓库 `cosign.pub` 的副本，轮换密钥时两处必须同步发布）。
+- OCIRepository `catalog-default`，即本节"安装模型"中的源对象。
+
+源已存在时 GUI 不覆盖它，只显示其 Ready 与 SourceVerified 状态。
+
+### 参数更新
+
+已由 Kubeyard 安装的组件可以"更新参数"。表单以集群中存储的参数为初值（来自 `addon-<name>-params` 的 `values.yaml`，以及 Kustomization 的 `postBuild.substitute`），因此保存时不会把已安装的值重置为默认值。更新只重写这两处，之后由 Flux 协调。
+
+版本升级不由 GUI 单独触发：OCIRepository 跟随 `stable` tag，新版本发布后 Flux 自动拉取。
+
+### 安装 Flux
+
+Flux 本身用 [flux-operator](https://github.com/controlplaneio-fluxcd/flux-operator) 安装：GUI 通过 Helm SDK 从 `oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator` 安装 chart 0.61.0（release `flux-operator`，namespace `flux-system`，Helm 等待 operator 就绪），然后创建 `FluxInstance`（`flux-system/flux`，Flux 2.x，upstream-alpine，四个核心控制器）。只有在没有 Flux 控制器、没有 `flux-operator` release、也没有 FluxInstance 时才可用，不接管其他方式安装的 Flux。升级 Flux 只改这个 FluxInstance 的 `distribution.version`，不用 shell 调 `flux bootstrap`。v1 的 addon 仍用上面的 Kustomization + ConfigMap，只依赖 Flux 核心 API，作者门槛更低；若后续需要"同一 addon 按虚拟集群批量实例化"，再评估切换到 flux-operator 的 ResourceSet。具体版本在 M1 从各 releases 页面锁定。
 
 镜像仓库：catalog 中的镜像与 chart 地址保持上游原样。内网集群需要镜像覆盖（例如 k8s-in-action 现用的 `mir.blsc.cn`）时，在 GUI 的集群设置中配置，由安装时的 postBuild 变量注入，不写进 catalog 本身。
 

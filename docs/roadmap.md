@@ -20,15 +20,18 @@
 - 组件页：浏览、按 schema 填参数、安装 / 升级 / 卸载、查看 Flux 状态与事件
 - 技术验证：mygo 概览页与节点表格（用于兜底判断）
 
-状态（M1 进行中）：
+状态（M1 收尾）：
 
 - [x] 概览、节点表格、kubeconfig context 切换
 - [x] catalog 仓库：8 个 host 组件，cosign 签名发布到 GHCR，参数归属由 `x-kubeyard-target` 标记
 - [x] 组件页：只读列表（已安装 / 已存在 / 未安装 / 无法判断）、参数表单、安装 / 卸载（二次确认，守卫在写入前复查）
 - [x] 组件的 Flux 状态与最近事件（仅 Kubeyard 管理的组件）
-- [ ] 升级（改 OCIRepository tag 或参数）
-- [ ] 一键安装 Flux（flux-operator）：待定安装方式
-- [ ] 添加 catalog 源：待定 cosign 公钥来源
+- [x] 健康检查支持 CRD（`CustomResourceDefinition`），gateway-api-crds 据此判断
+- [x] 参数更新：表单以集群中存储的参数为初值，只对 Kubeyard 管理的组件开放
+- [x] 一键安装 Flux：Helm SDK 从 OCI 拉取 flux-operator 0.61.0，再创建 FluxInstance；已有 Flux 时拒绝
+- [x] 添加 catalog 源：公钥随二进制嵌入，创建校验签名的 OCIRepository；源已存在或 Flux 未安装时不显示
+- [ ] 版本升级入口：目前 OCIRepository 跟随 stable tag 由 Flux 自动拉取，GUI 尚无单独操作
+- [ ] 写入路径的端到端验证：bz1-dev1 已有 Flux 与 catalog 源，安装 / 卸载 / 参数更新 / Flux 安装只有单元测试，尚未在集群上执行（需明确授权）
 
 ## M2 虚拟集群与资源池
 

@@ -70,35 +70,41 @@ const (
 type Status int
 
 const (
-	// Unknown means no health entry can be checked with Helm and workload
-	// lookups, such as a CRD-only addon.
+	// Unknown means no health entry can be checked with Helm release, workload
+	// or CRD lookups, such as a Kustomization.
 	Unknown Status = iota
 	// Absent means the addon's health objects are missing.
 	Absent
-	// Existing means a workload of the addon runs, but no Helm release for
-	// it exists. The component was installed by other means, so it must not
-	// be installed again.
+	// Existing means a workload or CRD of the addon is present, but no Helm
+	// release for it exists. The component was installed by other means, so
+	// it must not be installed again.
 	Existing
 	// Installed means the addon's Helm release exists.
 	Installed
 )
 
 // Status checks the addon against a cluster. has reports whether an object of
-// the given kind exists, using the kinds "HelmRelease", "Deployment" and
-// "DaemonSet".
+// the given kind exists, using the kinds "HelmRelease", "Deployment",
+// "DaemonSet" and "CustomResourceDefinition" (cluster-scoped, so its namespace
+// is empty).
 func (a Addon) Status(has func(kind, namespace, name string) bool) Status {
 	checkable := false
 	existing := false
 	for _, h := range a.Health {
-		if h.Kind != "HelmRelease" {
-			continue
-		}
-		checkable = true
-		if has("HelmRelease", a.Namespace, h.Name) {
-			return Installed
-		}
-		if has("Deployment", a.Namespace, h.Name) || has("DaemonSet", a.Namespace, h.Name) {
-			existing = true
+		switch h.Kind {
+		case "HelmRelease":
+			checkable = true
+			if has("HelmRelease", a.Namespace, h.Name) {
+				return Installed
+			}
+			if has("Deployment", a.Namespace, h.Name) || has("DaemonSet", a.Namespace, h.Name) {
+				existing = true
+			}
+		case "CustomResourceDefinition":
+			checkable = true
+			if has("CustomResourceDefinition", "", h.Name) {
+				existing = true
+			}
 		}
 	}
 	switch {

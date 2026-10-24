@@ -62,7 +62,7 @@ func Install(ctx context.Context, cs kubernetes.Interface, dc dynamic.Interface,
 	if err := upsertConfigMap(ctx, cs, cm); err != nil {
 		return err
 	}
-	return upsertKustomization(ctx, dc, kustomization(a))
+	return upsertObject(ctx, dc.Resource(kustomizations).Namespace(CatalogNamespace), kustomization(a))
 }
 
 // Uninstall deletes the addon's Kustomization. Flux prunes what it applied,
@@ -78,6 +78,32 @@ func Uninstall(ctx context.Context, cs kubernetes.Interface, dc dynamic.Interfac
 		return err
 	}
 	return nil
+}
+
+// LoadAddonParams reads the values an addon was installed with: the Helm values
+// from its parameter ConfigMap, and the postBuild substitutions from its
+// Kustomization. Nothing stored yields nil values and no error.
+func LoadAddonParams(ctx context.Context, cs kubernetes.Interface, dc dynamic.Interface, addon string) (map[string]any, map[string]string, error) {
+	var helm map[string]any
+	cm, err := cs.CoreV1().ConfigMaps(CatalogNamespace).Get(ctx, paramsName(addon), metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		return nil, nil, err
+	default:
+		if err := yaml.Unmarshal([]byte(cm.Data["values.yaml"]), &helm); err != nil {
+			return nil, nil, err
+		}
+	}
+	kz, err := dc.Resource(kustomizations).Namespace(CatalogNamespace).Get(ctx, kustomizationName(addon), metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		return helm, nil, nil
+	case err != nil:
+		return nil, nil, err
+	}
+	substitute, _, err := unstructured.NestedStringMap(kz.Object, "spec", "postBuild", "substitute")
+	return helm, substitute, err
 }
 
 func kustomizationName(addon string) string { return "addon-" + addon }
@@ -132,8 +158,8 @@ func upsertConfigMap(ctx context.Context, cs kubernetes.Interface, cm *corev1.Co
 	return err
 }
 
-func upsertKustomization(ctx context.Context, dc dynamic.Interface, obj *unstructured.Unstructured) error {
-	client := dc.Resource(kustomizations).Namespace(obj.GetNamespace())
+// upsertObject creates obj, or updates the existing object of the same name.
+func upsertObject(ctx context.Context, client dynamic.ResourceInterface, obj *unstructured.Unstructured) error {
 	cur, err := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = client.Create(ctx, obj, metav1.CreateOptions{})

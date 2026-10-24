@@ -47,13 +47,21 @@ type loaded struct {
 type catalogState struct {
 	source    kube.Source
 	hasSource bool
-	cat       *catalog.Catalog
+	// fluxInstalled says whether Flux can reconcile a catalog source. A source
+	// can only be added when it can. fluxInstallable says Kubeyard may install
+	// Flux, which it does not do over an installation made another way.
+	fluxInstalled   bool
+	fluxInstallable bool
+	cat             *catalog.Catalog
 	// status and managed are keyed by addon name. managed means Kubeyard
 	// installed the addon, so its Kustomization exists.
 	status  map[string]catalog.Status
 	managed map[string]bool
 	// flux is the Flux state of each managed addon.
 	flux map[string]kube.AddonFlux
+	// current holds the parameters each managed addon was installed with, by
+	// parameter path. The form starts from them, so an update keeps them.
+	current map[string]map[string]any
 	// note is muted text for a state that is not an error, such as no source.
 	note string
 	// err explains why a source exists but its catalog cannot be shown.
@@ -69,8 +77,9 @@ type paramField struct {
 	on   bool
 }
 
-// action is a cluster write. It runs off the main thread.
-type action func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error
+// action is a cluster write against the named context. It runs off the main
+// thread.
+type action func(ctx context.Context, contextName string, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error
 
 // app is the state the window shows. Background loads write to it through
 // win.Update, so the fields are only touched on the main thread.
@@ -81,10 +90,13 @@ type app struct {
 	page     page
 
 	loadedFor string
-	loading   bool
-	err       string
-	data      loaded
-	nodes     ui.ListState
+	// dataFor is the context data was last loaded for. The selected addon
+	// is kept across refreshes of the same context.
+	dataFor string
+	loading bool
+	err     string
+	data    loaded
+	nodes   ui.ListState
 
 	addons   ui.ListState
 	selAddon int
@@ -216,6 +228,25 @@ func (a *app) catalogPage(c *ui.Context) {
 		if cs.err != "" {
 			ui.Text(c, cs.err).TextColor(t.Danger)
 		}
+		if cs.fluxInstallable {
+			label := "安装 Flux"
+			if a.confirm == "flux" {
+				label = "确认安装 Flux"
+			}
+			if ui.Button(c.Key("install-flux"), label).Disabled(a.busy).Clicked() {
+				if a.confirm == "flux" {
+					a.confirm = ""
+					a.installFlux()
+				} else {
+					a.confirm = "flux"
+				}
+			}
+		}
+		if !cs.hasSource && cs.fluxInstalled {
+			if ui.Button(c.Key("add-source"), "添加 catalog 源").Disabled(a.busy).Clicked() {
+				a.addSource()
+			}
+		}
 		if cs.cat == nil {
 			return
 		}
@@ -268,7 +299,7 @@ func (a *app) addonDetail(c *ui.Context, cs catalogState) {
 		return
 	}
 	ad := addons[a.selAddon]
-	a.resetForm(ad)
+	a.resetForm(ad, cs.current[ad.Name])
 	ui.Column(c).Grow(1).Padding(14).Gap(8).Background(t.Surface).Radius(10).Border(1, t.Border).Children(func() {
 		ui.Text(c, ad.DisplayName).FontSize(16).Bold()
 		ui.Text(c, ad.Description).TextColor(t.TextMuted)
@@ -362,6 +393,20 @@ func (a *app) actions(c *ui.Context, cs catalogState, ad catalog.Addon) {
 					a.confirm = "uninstall"
 				}
 			}
+			if cs.managed[ad.Name] {
+				updateLabel := "更新参数"
+				if a.confirm == "update" {
+					updateLabel = "确认更新"
+				}
+				if ui.Button(c.Key("update"), updateLabel).Disabled(a.busy).Clicked() {
+					if a.confirm == "update" {
+						a.confirm = ""
+						a.update(ad)
+					} else {
+						a.confirm = "update"
+					}
+				}
+			}
 			if a.confirm != "" {
 				if ui.Button(c.Key("cancel"), "取消").Clicked() {
 					a.confirm = ""
@@ -399,7 +444,7 @@ func (a *app) install(cat *catalog.Catalog, ad catalog.Addon) {
 		a.actionErr = err.Error()
 		return
 	}
-	a.act("安装", "已提交安装，Flux 正在协调，状态会在刷新后更新", func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+	a.act("安装", "已提交安装，Flux 正在协调，状态会在刷新后更新", actionTimeout, func(ctx context.Context, _ string, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
 		inv, err := kube.LoadInventory(ctx, cfg)
 		if err != nil {
 			return err
@@ -421,7 +466,7 @@ func (a *app) install(cat *catalog.Catalog, ad catalog.Addon) {
 // uninstall removes an addon Kubeyard installed. The guard is checked again
 // against the cluster before anything is deleted.
 func (a *app) uninstall(cat *catalog.Catalog, name string) {
-	a.act("卸载", "已提交卸载，Flux 回收完成后状态会更新", func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+	a.act("卸载", "已提交卸载，Flux 回收完成后状态会更新", actionTimeout, func(ctx context.Context, _ string, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
 		inv, err := kube.LoadInventory(ctx, cfg)
 		if err != nil {
 			return err
@@ -433,15 +478,77 @@ func (a *app) uninstall(cat *catalog.Catalog, name string) {
 	})
 }
 
+// installFlux installs Flux with the Flux Operator. The operator's Helm install
+// waits for it to be ready, so the action gets its own timeout. The guard is
+// checked again against the cluster before anything is written.
+func (a *app) installFlux() {
+	a.act("安装 Flux", "已提交安装 Flux，控制器就绪后组件会出现，可稍后刷新", kube.FluxInstallTimeout, func(ctx context.Context, contextName string, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+		return kube.InstallFlux(ctx, contextName, cfg, cs, dc)
+	})
+}
+
+// addSource adds the default catalog source. It only creates objects, so it
+// runs on one click. The guards are checked again against the cluster first.
+func (a *app) addSource() {
+	a.act("添加 catalog 源", "已添加 catalog 源，Flux 拉取并校验后组件会出现，可稍后刷新", actionTimeout, func(ctx context.Context, _ string, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+		inv, err := kube.LoadInventory(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		if !inv.FluxInstalled() {
+			return errors.New("未检测到 Flux，无法添加 catalog 源")
+		}
+		_, err = kube.LoadSource(ctx, cfg, kube.CatalogNamespace, kube.CatalogSource)
+		if err == nil {
+			return errors.New("catalog 源已存在")
+		}
+		if !errors.Is(err, kube.ErrNoSource) {
+			return err
+		}
+		return kube.AddCatalogSource(ctx, cs, dc, kube.DefaultCatalogURL, kube.CatalogPublicKey)
+	})
+}
+
+// update rewrites the parameters of an addon Kubeyard installed. Flux
+// reconciles the change. The guard is checked again against the cluster first.
+func (a *app) update(ad catalog.Addon) {
+	values, err := a.formValues(ad)
+	if err != nil {
+		a.actionErr = err.Error()
+		return
+	}
+	helm, substitute, err := ad.Render(values)
+	if err != nil {
+		a.actionErr = err.Error()
+		return
+	}
+	a.act("更新参数", "已提交参数更新，Flux 会重新协调，状态会在刷新后更新", actionTimeout, func(ctx context.Context, _ string, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+		inv, err := kube.LoadInventory(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		if !inv.Managed(ad.Name) {
+			return errors.New("不是由 Kubeyard 安装的，不会更新参数")
+		}
+		return kube.Install(ctx, cs, dc, kube.Addon{
+			Name:       ad.Name,
+			Namespace:  ad.Namespace,
+			DependsOn:  ad.DependsOn,
+			Values:     helm,
+			Substitute: substitute,
+		})
+	})
+}
+
 // act runs a cluster write for the selected context in the background, then
 // reloads the context. done is shown when the write succeeds.
-func (a *app) act(label, done string, fn action) {
+func (a *app) act(label, done string, timeout time.Duration, fn action) {
 	name := a.selected
 	a.busy = true
 	a.actionErr = ""
 	a.notice = ""
 	go func() {
-		err := runAction(name, fn)
+		err := runAction(name, timeout, fn)
 		a.win.Update(func() {
 			a.busy = false
 			if err != nil {
@@ -485,20 +592,34 @@ func (a *app) formValues(ad catalog.Addon) (map[string]any, error) {
 	return values, nil
 }
 
-// resetForm starts the form over when another addon is selected. Booleans
-// start at their schema default; other fields start empty.
-func (a *app) resetForm(ad catalog.Addon) {
-	if a.formFor == ad.Name {
+// resetForm fills the form for an addon from current, the values it was
+// installed with, and falls back to the schema default for the rest. The form
+// is rebuilt when another addon or context is selected, and after a refresh
+// (a.fields is nil then). Messages are only cleared on a selection change, so
+// the outcome of an action survives the refresh that follows it.
+func (a *app) resetForm(ad catalog.Addon, current map[string]any) {
+	key := a.selected + "/" + ad.Name
+	if a.formFor != key {
+		a.formFor = key
+		a.fields = nil
+		a.confirm = ""
+		a.actionErr = ""
+		a.notice = ""
+	}
+	if a.fields != nil {
 		return
 	}
-	a.formFor = ad.Name
 	a.fields = make(map[string]*paramField, len(ad.Params))
-	a.confirm = ""
-	a.actionErr = ""
-	a.notice = ""
 	for _, p := range ad.Params {
 		f := &paramField{}
-		f.on, _ = p.Default.(bool)
+		if p.Type == "boolean" {
+			f.on, _ = p.Default.(bool)
+			if b, ok := current[p.Path].(bool); ok {
+				f.on = b
+			}
+		} else if v, ok := current[p.Path]; ok {
+			f.text = fmt.Sprint(v)
+		}
 		a.fields[p.Path] = f
 	}
 }
@@ -523,7 +644,11 @@ func (a *app) refresh() {
 				return
 			}
 			a.data = data
-			a.selAddon = 0
+			if a.dataFor != name {
+				a.selAddon = 0
+			}
+			a.dataFor = name
+			a.fields = nil
 		})
 	}()
 }
@@ -561,9 +686,14 @@ func load(contextName string) (loaded, error) {
 // OCIRepository verified. Nothing from an unverified source is shown.
 func loadCatalog(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface, inv kube.Inventory) catalogState {
 	var out catalogState
+	out.fluxInstalled = inv.FluxInstalled()
+	out.fluxInstallable = inv.FluxInstallable()
 	src, err := kube.LoadSource(ctx, cfg, kube.CatalogNamespace, kube.CatalogSource)
 	if errors.Is(err, kube.ErrNoSource) {
 		out.note = fmt.Sprintf("集群中没有 catalog 源 %s/%s", kube.CatalogNamespace, kube.CatalogSource)
+		if !out.fluxInstalled {
+			out.note = fmt.Sprintf("未检测到 Flux 控制器（%s/source-controller），先安装 Flux 才能添加 catalog 源", kube.FluxNamespace)
+		}
 		return out
 	}
 	if err != nil {
@@ -596,10 +726,19 @@ func loadCatalog(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface,
 	out.status = cat.Statuses(inv.Has)
 	out.managed = make(map[string]bool, len(cat.Addons))
 	out.flux = make(map[string]kube.AddonFlux)
+	out.current = make(map[string]map[string]any)
 	for _, ad := range cat.Addons {
 		out.managed[ad.Name] = inv.Managed(ad.Name)
 		if !out.managed[ad.Name] {
 			continue
+		}
+		helm, substitute, err := kube.LoadAddonParams(ctx, cs, dc, ad.Name)
+		if err != nil {
+			if out.err == "" {
+				out.err = "读取已安装参数失败：" + err.Error()
+			}
+		} else {
+			out.current[ad.Name] = ad.Current(helm, substitute)
 		}
 		fx, err := kube.LoadAddonFlux(ctx, dc, cs, ad.Name, helmReleaseNames(ad))
 		if err != nil {
@@ -611,8 +750,9 @@ func loadCatalog(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface,
 	return out
 }
 
-// runAction builds clients for a context and runs fn with a bounded context.
-func runAction(contextName string, fn action) error {
+// runAction builds clients for a context and runs fn with a context that ends
+// after timeout.
+func runAction(contextName string, timeout time.Duration, fn action) error {
 	cfg, err := kube.RESTConfig(contextName)
 	if err != nil {
 		return err
@@ -625,9 +765,9 @@ func runAction(contextName string, fn action) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return fn(ctx, cfg, cs, dc)
+	return fn(ctx, contextName, cfg, cs, dc)
 }
 
 // helmReleaseNames lists the HelmReleases an addon's health checks name.

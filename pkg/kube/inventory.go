@@ -13,10 +13,19 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// Inventory is the set of Helm releases and workloads in a cluster. The GUI
-// compares it with the catalog to tell which components are already there.
+// Inventory is the set of Helm releases, workloads and CRDs in a cluster. The
+// GUI compares it with the catalog to tell which components are already there.
 type Inventory struct {
 	objects map[string]bool
+}
+
+// FluxNamespace is where the Flux controllers run.
+const FluxNamespace = "flux-system"
+
+var customResourceDefinitions = schema.GroupVersionResource{
+	Group:    "apiextensions.k8s.io",
+	Version:  "v1",
+	Resource: "customresourcedefinitions",
 }
 
 // Has reports whether an object exists. Kind is "HelmRelease" for a Helm
@@ -30,6 +39,18 @@ func (inv Inventory) Has(kind, namespace, name string) bool {
 // Kustomization exists.
 func (inv Inventory) Managed(addon string) bool {
 	return inv.Has("Kustomization", CatalogNamespace, kustomizationName(addon))
+}
+
+// FluxInstalled reports whether Flux's source controller runs in the cluster.
+// Catalog sources are OCIRepositories that only this controller reconciles.
+func (inv Inventory) FluxInstalled() bool {
+	return inv.Has("Deployment", FluxNamespace, "source-controller")
+}
+
+// FluxInstallable reports whether Kubeyard may install Flux: neither the
+// controllers nor the operator release exist.
+func (inv Inventory) FluxInstallable() bool {
+	return !inv.FluxInstalled() && !inv.Has("HelmRelease", FluxNamespace, FluxOperatorRelease)
 }
 
 func objectKey(kind, namespace, name string) string {
@@ -57,6 +78,7 @@ func LoadInventory(ctx context.Context, cfg *rest.Config) (Inventory, error) {
 		{"Deployment", appsv1.SchemeGroupVersion.WithResource("deployments"), "", false},
 		{"DaemonSet", appsv1.SchemeGroupVersion.WithResource("daemonsets"), "", false},
 		{"Kustomization", kustomizations, addonLabel, true},
+		{"CustomResourceDefinition", customResourceDefinitions, "", false},
 	}
 	inv := Inventory{objects: map[string]bool{}}
 	for _, l := range lists {

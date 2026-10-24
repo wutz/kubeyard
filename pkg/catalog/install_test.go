@@ -18,6 +18,31 @@ func testAddon() Addon {
 	}
 }
 
+func TestCurrentRoundTripsRender(t *testing.T) {
+	ad := Addon{Name: "x", Params: []Param{
+		{Path: "driver.enabled", Type: "boolean", Target: TargetValues},
+		{Path: "driver.version", Type: "string", Target: TargetValues},
+		{Path: "vip", Type: "string", Target: TargetSubstitute},
+	}}
+	values := map[string]any{"driver.enabled": true, "driver.version": "580.95.05", "vip": "192.0.2.10"}
+	helm, substitute, err := ad.Render(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ad.Current(helm, substitute)
+	if len(got) != len(values) {
+		t.Fatalf("Current = %v, want %v", got, values)
+	}
+	for path, want := range values {
+		if got[path] != want {
+			t.Errorf("%s = %v, want %v", path, got[path], want)
+		}
+	}
+	if empty := ad.Current(map[string]any{}, nil); len(empty) != 0 {
+		t.Errorf("Current of nothing stored = %v, want empty", empty)
+	}
+}
+
 func TestRenderSplitsTargets(t *testing.T) {
 	helm, sub, err := testAddon().Render(map[string]any{
 		"metallb_addresses": "192.0.2.10-192.0.2.20",

@@ -84,6 +84,32 @@ func TestInstallUpdatesExisting(t *testing.T) {
 	}
 }
 
+func TestLoadAddonParamsReadsWhatWasInstalled(t *testing.T) {
+	ctx := context.Background()
+	cs := kubefake.NewClientset()
+	dc := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	if err := Install(ctx, cs, dc, testAddon()); err != nil {
+		t.Fatal(err)
+	}
+	helm, sub, err := LoadAddonParams(ctx, cs, dc, "metallb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver, _ := helm["driver"].(map[string]any)
+	if driver["enabled"] != true {
+		t.Errorf("driver.enabled = %v, want true", driver["enabled"])
+	}
+	if sub["metallb_addresses"] != "192.0.2.10-192.0.2.20" {
+		t.Errorf("metallb_addresses = %q", sub["metallb_addresses"])
+	}
+
+	helm, sub, err = LoadAddonParams(ctx, cs, dc, "absent")
+	if err != nil || helm != nil || sub != nil {
+		t.Errorf("absent addon: helm=%v sub=%v err=%v, want all empty", helm, sub, err)
+	}
+}
+
 func TestUninstallRemovesObjectsAndToleratesMissing(t *testing.T) {
 	ctx := context.Background()
 	cs := kubefake.NewClientset()
