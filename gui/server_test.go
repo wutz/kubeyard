@@ -310,3 +310,23 @@ func TestPoolsForbiddenIsAnError(t *testing.T) {
 		t.Errorf("body = %s, want an error, not a page", rec.Body.String())
 	}
 }
+
+func TestExportAdminKubeconfigRequiresToken(t *testing.T) {
+	s := testServer(t)
+	rec := do(t, s.handler(), "POST", "/api/virtualclusters/acme/admin-kubeconfig", testHost, nil, `{"context":"dev","confirm":"acme"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestExportAdminKubeconfigRequiresConfirm(t *testing.T) {
+	s := testServer(t)
+	rec := do(t, s.handler(), "POST", "/api/virtualclusters/acme/admin-kubeconfig", testHost,
+		map[string]string{tokenHeader: s.token}, `{"context":"dev","confirm":"acm"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "确认导出") {
+		t.Fatalf("body = %s, want the confirmation prompt", rec.Body)
+	}
+}
