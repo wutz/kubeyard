@@ -137,6 +137,8 @@ Flux 已安装且集群中没有 `kubeyard-system/catalog-default` 时，GUI 显
 
 已由 Kubeyard 安装的组件可以"更新参数"。表单以集群中存储的参数为初值（来自 `addon-<name>-params` 的 `values.yaml`，以及 Kustomization 的 `postBuild.substitute`），因此保存时不会把已安装的值重置为默认值。更新只重写这两处，之后由 Flux 协调。
 
+**已知问题（catalog 待修）：参数更新对 catalog 在 HelmRelease 中内联设置的键不生效。** Flux 中 `spec.values`（内联）优先于 `valuesFrom`，而当前每个组件的 `manifests/release.yaml` 都在 `spec.values` 内联了值（nfd 的 `master.replicaCount: 2` 即是）。参数 ConfigMap 写入正确，但 Flux 判定为已同步，副本数不变。在 k3d 上的验证中，即使手动触发协调，结果也一样。修复方向：catalog 的 `release.yaml` 不再内联 schema 暴露的键，改由参数 ConfigMap 提供（默认值写在 schema 中）；这需要发布新的 catalog tag。在修复之前，GUI 的"更新参数"只写入 ConfigMap，不能保证生效。
+
 版本升级不由 GUI 单独触发：OCIRepository 跟随 `stable` tag，新版本发布后 Flux 自动拉取。
 
 ### 安装 Flux

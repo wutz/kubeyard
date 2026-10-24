@@ -522,7 +522,7 @@ func (a *app) update(ad catalog.Addon) {
 		a.actionErr = err.Error()
 		return
 	}
-	a.act("更新参数", "已提交参数更新，Flux 会重新协调，状态会在刷新后更新", actionTimeout, func(ctx context.Context, _ string, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+	a.act("更新参数", "已写入参数，状态会在刷新后更新", actionTimeout, func(ctx context.Context, _ string, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
 		inv, err := kube.LoadInventory(ctx, cfg)
 		if err != nil {
 			return err

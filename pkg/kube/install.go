@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 
+	"github.com/wutz/kubeyard/pkg/catalog"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,7 +17,7 @@ import (
 const (
 	// CatalogNamespace holds the catalog source, and the Kustomizations and
 	// parameter ConfigMaps of installed addons.
-	CatalogNamespace = "kubeyard-system"
+	CatalogNamespace = catalog.ManagedNamespace
 	// CatalogSource is the OCIRepository the addon Kustomizations pull from.
 	CatalogSource = "catalog-default"
 	// addonLabel names the addon an object belongs to.

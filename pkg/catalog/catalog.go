@@ -83,6 +83,11 @@ const (
 	Installed
 )
 
+// ManagedNamespace holds the Flux objects Kubeyard creates for each addon. Flux
+// stores a release in the namespace of its HelmRelease object, so a release
+// installed by Kubeyard is recorded here, not in the addon's namespace.
+const ManagedNamespace = "kubeyard-system"
+
 // Status checks the addon against a cluster. has reports whether an object of
 // the given kind exists, using the kinds "HelmRelease", "Deployment",
 // "DaemonSet" and "CustomResourceDefinition" (cluster-scoped, so its namespace
@@ -94,7 +99,8 @@ func (a Addon) Status(has func(kind, namespace, name string) bool) Status {
 		switch h.Kind {
 		case "HelmRelease":
 			checkable = true
-			if has("HelmRelease", a.Namespace, h.Name) {
+			// A release Helm installed directly is recorded in the addon's namespace.
+			if has("HelmRelease", ManagedNamespace, h.Name) || has("HelmRelease", a.Namespace, h.Name) {
 				return Installed
 			}
 			if has("Deployment", a.Namespace, h.Name) || has("DaemonSet", a.Namespace, h.Name) {

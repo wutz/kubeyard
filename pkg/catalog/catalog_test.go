@@ -164,6 +164,14 @@ func TestStatus(t *testing.T) {
 		t.Errorf("gpu with deployment only = %v, want Existing", got)
 	}
 
+	// Flux records a Kubeyard install's release in ManagedNamespace, not in the
+	// addon's namespace.
+	managed := map[string]bool{"HelmRelease/" + ManagedNamespace + "/nfd": true}
+	managedHas := func(kind, ns, name string) bool { return managed[kind+"/"+ns+"/"+name] }
+	if got := nfd.Status(managedHas); got != Installed {
+		t.Errorf("nfd with release in %s = %v, want Installed", ManagedNamespace, got)
+	}
+
 	kustomizationOnly := Addon{Name: "gateway", Namespace: "kube-system", Health: []Health{{Kind: "Kustomization", Name: "addon-gateway"}}}
 	if got := kustomizationOnly.Status(has); got != Unknown {
 		t.Errorf("non-Helm health = %v, want Unknown", got)
