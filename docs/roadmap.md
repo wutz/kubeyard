@@ -31,7 +31,7 @@
 - [x] 一键安装 Flux：Helm SDK 从 OCI 拉取 flux-operator 0.61.0，再创建 FluxInstance；已有 Flux 时拒绝
 - [x] 添加 catalog 源：公钥随二进制嵌入，创建校验签名的 OCIRepository；源已存在或 Flux 未安装时不显示
 - 版本升级不作为 GUI 操作：OCIRepository 跟随 stable tag 由 Flux 自动拉取（范围决定，见 catalog.md）
-- [ ] 写入路径的端到端验证（k3d 集群，bz1-dev1 未触碰）：Flux 安装、重复安装拒绝、添加 catalog 源（cosign 校验通过）、安装 nfd（状态正确识别为已安装）、重复安装拒绝、卸载（Kustomization、参数、HelmRelease、Helm release 与工作负载全部移除）均已通过；参数更新只写入 ConfigMap，因 catalog 内联 values 覆盖而不生效；修复已发布为 catalog v2026.10.4（k3d 上 nfd 2→1→3 生效）。bz1-dev1 上的验证仍需明确授权
+- [ ] 写入路径的端到端验证（k3d 集群；bz1-dev1 上仅新增了 Flux 与 catalog 源，写入路径未在 bz1-dev1 上执行）：Flux 安装、重复安装拒绝、添加 catalog 源（cosign 校验通过）、安装 nfd（状态正确识别为已安装）、重复安装拒绝、卸载（Kustomization、参数、HelmRelease、Helm release 与工作负载全部移除）均已通过；参数更新只写入 ConfigMap，因 catalog 内联 values 覆盖而不生效；修复已发布为 catalog v2026.10.4（k3d 上 nfd 2→1→3 生效）。bz1-dev1 上的组件均已存在（nfd、gpu-operator、forgeai 为非 Kubeyard 安装），写入路径无可执行步骤，只读检查已完成
 
 ## M2 虚拟集群与资源池
 
