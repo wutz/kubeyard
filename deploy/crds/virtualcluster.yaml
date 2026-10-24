@@ -1,0 +1,155 @@
+# VirtualCluster: the unit of priority, nodes, metering, and kubeconfig (docs/operator.md §1).
+# The schema follows pkg/api/v1alpha1/types.go; TestCRDSchemasMatchTypes keeps them in step.
+# Invariants that a schema cannot express (min <= max, desired within [min, max], pinned
+# nodes bound to one claim only) are enforced by the admission webhook (§3.2).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: virtualclusters.kubeyard.wutz.dev
+spec:
+  group: kubeyard.wutz.dev
+  scope: Cluster
+  names:
+    kind: VirtualCluster
+    listKind: VirtualClusterList
+    plural: virtualclusters
+    singular: virtualcluster
+    shortNames: [vc]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Priority
+          type: integer
+          jsonPath: .spec.priority
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [priority, preemptible, provider, mode, exposure]
+              properties:
+                displayName:
+                  type: string
+                description:
+                  type: string
+                priority:
+                  type: integer
+                  description: Larger values win during cross-VC preemption.
+                preemptible:
+                  type: boolean
+                  description: false means nodes of this VC are never taken for another VC.
+                provider:
+                  type: string
+                  enum: [vcluster, k3k]
+                mode:
+                  type: string
+                  enum: [dedicated-nodes]
+                version:
+                  type: string
+                distro:
+                  type: string
+                exposure:
+                  type: object
+                  required: [type]
+                  properties:
+                    type:
+                      type: string
+                      enum: [LoadBalancer, Ingress]
+                    loadBalancerIP:
+                      type: string
+                    ingress:
+                      type: object
+                      required: [host, port]
+                      properties:
+                        host:
+                          type: string
+                        port:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                valuesOverride:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                poolClaims:
+                  type: array
+                  items:
+                    type: object
+                    required: [pool, min, max, desired]
+                    properties:
+                      pool:
+                        type: string
+                        minLength: 1
+                      min:
+                        type: integer
+                        minimum: 0
+                        description: Guaranteed nodes; never preempted.
+                      max:
+                        type: integer
+                        minimum: 1
+                        description: Caps scale-up and preemption.
+                      desired:
+                        type: integer
+                        minimum: 0
+                        description: Target count when autoscale is not enabled.
+                      autoscale:
+                        type: object
+                        properties:
+                          enabled:
+                            type: boolean
+                          scaleDownIdle:
+                            type: string
+                            description: Duration a node must be idle before it is released, such as 30m.
+                      pinnedNodes:
+                        type: array
+                        items:
+                          type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Pending, Provisioning, Ready, Degraded, Draining, Deleting]
+                hostNamespace:
+                  type: string
+                endpoint:
+                  type: string
+                adminKubeconfigSecretRef:
+                  type: object
+                  required: [namespace, name, key]
+                  properties:
+                    namespace:
+                      type: string
+                    name:
+                      type: string
+                    key:
+                      type: string
+                allocations:
+                  type: array
+                  items:
+                    type: object
+                    required: [pool]
+                    properties:
+                      pool:
+                        type: string
+                      nodes:
+                        type: array
+                        items:
+                          type: string
+                      pendingDemand:
+                        type: integer
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true

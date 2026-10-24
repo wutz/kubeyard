@@ -67,7 +67,11 @@
   - 已知缺口：抢占后节点上的 VC 标签与 NoSchedule taint 仍是原 VC（设计上等 drain 完成后再切换，drain 步骤未写）；Draining 不会迁移到 Bound 或 Released；释放与失效的租约只会进入 Draining，不会自动完成。
   - 未验证：bz1-dev1 上的运行（只读，未部署）；多节点与 GPU 节点的真实分配；准入 webhook（§3.2）。
 - vcluster 独占节点模式，手动 desired + pinnedNodes
-- 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）
+- [ ] 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）：后端已完成，GUI 页面与 vcluster 生成 Secret 未完成
+  - [x] `pkg/kube`：从 `status.adminKubeconfigSecretRef` 读取 Secret 的键；未生成、键缺失、值为空都报错；导出前必须写入审计 Event（`AdminKubeconfigExported`，写在 `default` 命名空间，因为 VirtualCluster 是 cluster 级对象）。单元测试 7 个。
+  - [x] `POST /api/virtualclusters/{name}/admin-kubeconfig`：需要 `confirm` 与名称一致，响应 `Cache-Control: no-store`，审计 Event 写入失败时不返回凭证。测试覆盖 token 与确认。
+  - 2026-10-25 本地 k3d 实测：手动创建 Secret 与 status 引用，GUI headless 运行。未确认返回 400；确认后返回 200 与 kubeconfig，审计 Event 写入，`Cache-Control: no-store`。实测中发现并修复：最初把 Event 写入宿主命名空间，API 因 involvedObject 为 cluster 级对象而拒绝（失败时正确地返回 502，且不返回凭证）。
+  - 未完成：vcluster 尚未由 operator 生成 admin Secret，因此端到端只能用手动 Secret 验证；GUI 的虚拟集群页面与"以该 VC 管理员身份打开"未实现；轮换注解未实现。
 - GUI：虚拟集群、资源池页面，节点拖拽分配
 
 ## M3 弹性与抢占

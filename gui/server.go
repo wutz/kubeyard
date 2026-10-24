@@ -76,6 +76,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/addons/{name}/install", s.installAddon)
 	mux.HandleFunc("POST /api/addons/{name}/update", s.updateAddon)
 	mux.HandleFunc("POST /api/addons/{name}/uninstall", s.uninstallAddon)
+	mux.HandleFunc("POST /api/virtualclusters/{name}/admin-kubeconfig", s.exportAdminKubeconfig)
 	return s.guard(mux)
 }
 
@@ -134,6 +135,9 @@ func writeError(w http.ResponseWriter, status int, err error) {
 type writeRequest struct {
 	Context string         `json:"context"`
 	Fields  map[string]any `json:"fields"`
+	// Confirm repeats the name of the resource whose export needs a second
+	// confirmation (docs/operator.md §4.1). Other writes ignore it.
+	Confirm string `json:"confirm,omitempty"`
 }
 
 // decodeWrite reads a writeRequest. It writes the error response itself and
