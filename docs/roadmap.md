@@ -59,10 +59,13 @@
 - [x] NodePool 状态计算（`pkg/pool`）：total / free / reserved / unhealthy；空选择器与非法选择器拒绝，有单元测试
 - [x] 分配算法（`pkg/alloc`）：期望值（§3.1）、准入不变量（§3.2）、分配与抢占顺序（§3.3），纯函数，有单元测试覆盖每条规则（[#14](https://github.com/wutz/kubeyard/pull/14)）
   - 待确认：§3.2 称 min 永远可满足，§3.3 只允许更低优先级抢占。当前实现对 min 缺口也只抢更低优先级的弹性节点，满足不了时体现为 Shortfall。若要求 min 优先于同级，需先修改 §3.3
-- [ ] kubeyard-operator host 模式：VirtualCluster、NodePool、NodeLease（operator 骨架未开始）
+- [ ] kubeyard-operator host 模式：VirtualCluster、NodePool、NodeLease（drain 步骤未完成）
   - [x] API 类型与 scheme（`pkg/api/v1alpha1`）：三个 kind 与 `operator.md` §1 的示例 JSON 一致，DeepCopy 手写并有独立性测试。
-  - [x] CRD manifest（`deploy/crds/`）：字段与枚举由测试对齐 Go 类型；在本地 k3d 上 server-side dry-run 通过，§1 的三个示例 CR 通过 schema 校验（未持久化到任何集群）。
-  - [ ] 协调循环：`pkg/operator/host` 对单个 NodePool 计算状态、运行分配、写 NodeLease 与节点标签 / taint、回写 VC allocations（[#17](https://github.com/wutz/kubeyard/pull/17)）。drain 步骤与 `cmd/kubeyard-operator --mode=host` 未完成。
+  - [x] CRD manifest（`deploy/crds/`，[#20](https://github.com/wutz/kubeyard/pull/20)）：字段与枚举由测试对齐 Go 类型；§1 的三个示例 CR 在本地 k3d 上 server-side dry-run 通过。
+  - [x] 协调循环（`pkg/operator/host`，[#17](https://github.com/wutz/kubeyard/pull/17)）与入口（`cmd/kubeyard-operator --mode=host`）：计算 NodePool.status，按 §3 分配，写 NodeLease、节点 VC 标签 / pool 标签 / NoSchedule taint（§2），回写 VC allocations。`--mode=vcluster` 明确报错，未实现。RBAC 在 `deploy/operator/rbac.yaml`。
+  - 2026-10-25 本地 k3d 实测（单节点 NodePool）：min=0 的 VC 获得空闲节点，lease 为 Bound，节点标签与 taint 正确，VC allocations 正确；更高优先级的不可抢占 VC 到达后，节点的 lease 转为该 VC、reason=Preempt、phase=Draining、drainDeadline 为 grace 之后。operator 日志无错误。
+  - 已知缺口：抢占后节点上的 VC 标签与 NoSchedule taint 仍是原 VC（设计上等 drain 完成后再切换，drain 步骤未写）；Draining 不会迁移到 Bound 或 Released；释放与失效的租约只会进入 Draining，不会自动完成。
+  - 未验证：bz1-dev1 上的运行（只读，未部署）；多节点与 GPU 节点的真实分配；准入 webhook（§3.2）。
 - vcluster 独占节点模式，手动 desired + pinnedNodes
 - [ ] 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）：后端已完成，GUI 页面与 vcluster 生成 Secret 未完成
   - [x] `pkg/kube`：从 `status.adminKubeconfigSecretRef` 读取 Secret 的键；未生成、键缺失、值为空都报错；导出前必须写入审计 Event（`AdminKubeconfigExported`，写在 `default` 命名空间，因为 VirtualCluster 是 cluster 级对象）。单元测试 7 个。
