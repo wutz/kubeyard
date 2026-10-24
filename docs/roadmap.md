@@ -41,7 +41,8 @@
   - 原生窗口（2026-10-24）：macOS 本机非 headless 启动后窗口标题 Kubeyard、尺寸 1120×720 出现，WebKit 网络进程连接本地服务并加载页面。本机截屏为黑屏（未授予屏幕录制权限），因此当时未目视确认。
   - 原生窗口 CI 检查（[#9](https://github.com/wutz/kubeyard/pull/9)、[#10](https://github.com/wutz/kubeyard/pull/10)、[#11](https://github.com/wutz/kubeyard/pull/11)）：ubuntu-22.04（xvfb）、macOS、Windows 三个 runner 上均启动 GUI 窗口，本地服务返回带 token 的页面，进程保持运行，并截屏上传。截屏显示 Kubeyard 侧边栏、概览 / 组件导航与"未找到 kubeconfig context"空状态；Linux 截屏中的中文显示为方框，是 runner 缺少中文字体，不是应用问题。
   - 真实数据（Linux）：CI 的 `gui-live-cluster` job 用 helm/kind-action 起 kind 集群，运行 `.github/scripts/gui-smoke.sh`，并设置 `KUBEYARD_CHECK_OVERVIEW=1`，断言 `/api/overview` 的 `nodesTotal ≥ 1` 且 `nodesReady ≥ 1`，然后截屏（`gui-kind.png`，[#13](https://github.com/wutz/kubeyard/pull/13)）。截屏显示窗口内的真实节点与 Pod 数。
-  - 未验证：macOS 与 Windows 窗口内的真实数据。这两个 runner 没有集群，只覆盖空状态。M1 关闭前需补齐。
+  - 窗口数据（macOS、Windows）：三个 runner 的 GUI 步骤都经 `.github/scripts/with-fake-cluster.sh` 启动 `cmd/fakeapiserver`（假的 API server，不是真实集群，只返回一个 Ready 节点和两个 Running Pod），并设置 `KUBEYARD_CHECK_OVERVIEW=1` 断言 `/api/overview` 的 `nodesTotal ≥ 1` 且 `nodesReady ≥ 1`，Windows 用 PowerShell 做同样断言。截屏与 overview.json 上传。这证明 macOS 与 Windows 上窗口确实读到 API 返回的数据并显示。
+  - 未验证：macOS 与 Windows 连接真实集群时窗口内的数据。真实集群的数据目前只在 Linux 的 kind 上验证。
   - CI（[#7](https://github.com/wutz/kubeyard/pull/7)）：ubuntu-22.04、macOS、Windows 上 gofmt、vet、build、test 全部通过，GUI 的 cgo 构建包含在内。Windows 首次失败是 checkout 的 CRLF 让 gofmt 报错，已用 `.gitattributes` 固定 LF 修复。这三项已设为 main 的必需检查。
   - k3d 上已通过：Flux 安装、重复安装拒绝、添加 catalog 源（cosign 校验通过）、安装 nfd（状态识别为已安装）、重复安装拒绝、卸载（Kustomization、参数、HelmRelease、Helm release 与工作负载全部移除）。参数更新只写入 ConfigMap，因 catalog 内联 values 覆盖而不生效；修复已发布为 catalog v2026.10.4（k3d 上 nfd 2→1→3 生效）。
   - bz1-dev1 上：仅新增了 Flux 与 catalog 源（由本项目创建）。nfd、gpu-operator 等为非 Kubeyard 安装，只读检查完成，未修改。
