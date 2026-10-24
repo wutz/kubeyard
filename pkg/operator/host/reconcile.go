@@ -2,9 +2,10 @@
 // NodePool.status current and turns the poolClaims of VirtualClusters into
 // NodeLeases, following docs/operator.md §2 (node binding) and §3 (allocation).
 //
-// Drain is not implemented here. A node that is preempted or released is marked
-// Draining and stays that way until a drain step (not yet written) moves it on.
-// Nothing is deleted, and no node is re-granted while it is still draining.
+// A node that is preempted or released is marked Draining. The drain step in
+// drain.go then evicts the old VirtualCluster's pods after the grace period, and
+// moves the node on once it is empty: a preempted node is bound to its claimant,
+// a released node is unbound. No node is re-granted while it is still draining.
 package host
 
 import (
@@ -25,10 +26,12 @@ import (
 	"github.com/wutz/kubeyard/pkg/pool"
 )
 
-// Node label and taint keys from docs/operator.md §2.
+// Node label and taint keys from docs/operator.md §2, and the taint that keeps
+// new pods off a node while it drains (§3.4 step 1).
 const (
-	VCLabel   = "kubeyard.wutz.dev/vcluster"
-	PoolLabel = "kubeyard.wutz.dev/pool"
+	VCLabel     = "kubeyard.wutz.dev/vcluster"
+	PoolLabel   = "kubeyard.wutz.dev/pool"
+	DrainingKey = "kubeyard.wutz.dev/draining"
 )
 
 // Reconciler reconciles one NodePool per call. The controller runs calls one at
@@ -104,6 +107,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.apply(ctx, &np, o.claims, o.leases, plan); err != nil {
 		return ctrl.Result{}, err
 	}
+	if o, err = r.observe(ctx, &np); err != nil {
+		return ctrl.Result{}, err
+	}
+	pending, err := r.drain(ctx, &np, o.leases)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// Observe again, so that the status and allocations describe what was written.
 	if o, err = r.observe(ctx, &np); err != nil {
@@ -115,7 +125,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.saveStatus(ctx, &np, st); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{}, r.saveAllocations(ctx, &np, o)
+	if err := r.saveAllocations(ctx, &np, o); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Pods leave a draining node on their own schedule, and no watch sees that,
+	// so a pool with draining nodes is polled again.
+	if pending {
+		return ctrl.Result{RequeueAfter: drainPoll}, nil
+	}
+	return ctrl.Result{}, nil
 }
 
 // poolLeases keeps the leases of one pool that are not yet released.
@@ -277,7 +295,9 @@ func (r *Reconciler) apply(ctx context.Context, np *v1alpha1.NodePool, claims []
 		}
 	}
 
-	grace := durationOr(np.Spec.Preemption.GracePeriod, 0)
+	// The deadline is the forced-deletion time: grace (the notice window), then
+	// drain timeout. drainStart in drain.go works back from it.
+	deadline := now.Add(durationOr(np.Spec.Preemption.GracePeriod, 0) + durationOr(np.Spec.Preemption.DrainTimeout, 0))
 	for _, v := range plan.Preempt {
 		l := byNode[v.Node]
 		if l == nil {
@@ -286,19 +306,18 @@ func (r *Reconciler) apply(ctx context.Context, np *v1alpha1.NodePool, claims []
 		spec := l.Spec
 		spec.VirtualCluster = v.ForVC
 		spec.Reason = v1alpha1.LeasePreempt
-		if err := r.updateLease(ctx, l, spec, draining(l, now.Add(grace))); err != nil {
+		if err := r.updateLease(ctx, l, spec, draining(l, deadline)); err != nil {
 			return err
 		}
 	}
 
-	drainTimeout := durationOr(np.Spec.Preemption.DrainTimeout, 0)
 	for vc, nodes := range plan.Release {
 		for _, node := range nodes {
 			l := byNode[node]
 			if l == nil || l.Spec.VirtualCluster != vc {
 				return fmt.Errorf("release %s from %s: no matching lease", node, vc)
 			}
-			if err := r.updateLease(ctx, l, l.Spec, draining(l, now.Add(drainTimeout))); err != nil {
+			if err := r.updateLease(ctx, l, l.Spec, draining(l, deadline)); err != nil {
 				return err
 			}
 		}
@@ -314,7 +333,7 @@ func (r *Reconciler) apply(ctx context.Context, np *v1alpha1.NodePool, claims []
 		if claimed[l.Spec.VirtualCluster] || l.Status.Phase == v1alpha1.LeaseDraining || l.Status.Phase == v1alpha1.LeaseReleased {
 			continue
 		}
-		if err := r.updateLease(ctx, l, l.Spec, draining(l, now.Add(drainTimeout))); err != nil {
+		if err := r.updateLease(ctx, l, l.Spec, draining(l, deadline)); err != nil {
 			return err
 		}
 	}
@@ -343,29 +362,52 @@ func (r *Reconciler) updateLease(ctx context.Context, l *v1alpha1.NodeLease, spe
 }
 
 // bindNode puts the VC label, pool label, and NoSchedule taint on a node
-// (docs/operator.md §2, steps 1 and 2).
+// (docs/operator.md §2, steps 1 and 2). Binding ends a drain, so the draining
+// taint is removed too.
 func (r *Reconciler) bindNode(ctx context.Context, name, vc, poolName string) error {
+	return r.patchNode(ctx, name, func(n *corev1.Node) {
+		if n.Labels == nil {
+			n.Labels = map[string]string{}
+		}
+		n.Labels[VCLabel] = vc
+		n.Labels[PoolLabel] = poolName
+		taints := withoutTaint(withoutTaint(n.Spec.Taints, VCLabel), DrainingKey)
+		n.Spec.Taints = append(taints, corev1.Taint{Key: VCLabel, Value: vc, Effect: corev1.TaintEffectNoSchedule})
+	})
+}
+
+// unbindNode takes the labels and taints of a binding off a node (§2, reverse
+// order), so the node is free again.
+func (r *Reconciler) unbindNode(ctx context.Context, name string) error {
+	return r.patchNode(ctx, name, func(n *corev1.Node) {
+		delete(n.Labels, VCLabel)
+		delete(n.Labels, PoolLabel)
+		n.Spec.Taints = withoutTaint(withoutTaint(n.Spec.Taints, VCLabel), DrainingKey)
+	})
+}
+
+// patchNode applies change to a node and patches the fields that changed.
+func (r *Reconciler) patchNode(ctx context.Context, name string, change func(*corev1.Node)) error {
 	var node corev1.Node
 	if err := r.Get(ctx, client.ObjectKey{Name: name}, &node); err != nil {
 		return err
 	}
 	orig := node.DeepCopy()
-	if node.Labels == nil {
-		node.Labels = map[string]string{}
-	}
-	node.Labels[VCLabel] = vc
-	node.Labels[PoolLabel] = poolName
-	var taints []corev1.Taint
-	for _, t := range node.Spec.Taints {
-		if t.Key != VCLabel {
-			taints = append(taints, t)
-		}
-	}
-	node.Spec.Taints = append(taints, corev1.Taint{Key: VCLabel, Value: vc, Effect: corev1.TaintEffectNoSchedule})
+	change(&node)
 	if reflect.DeepEqual(orig.Labels, node.Labels) && reflect.DeepEqual(orig.Spec.Taints, node.Spec.Taints) {
 		return nil
 	}
 	return r.Patch(ctx, &node, client.MergeFrom(orig))
+}
+
+func withoutTaint(taints []corev1.Taint, key string) []corev1.Taint {
+	var out []corev1.Taint
+	for _, t := range taints {
+		if t.Key != key {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // saveAllocations rewrites each VirtualCluster's allocation entry for this pool
