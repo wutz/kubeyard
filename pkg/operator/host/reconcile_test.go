@@ -91,8 +91,8 @@ func newClient(t *testing.T, objs ...client.Object) client.Client {
 		Build()
 }
 
-// reconcile runs one pass for the gpu pool with a fixed clock.
-func reconcile(c client.Client) error {
+// runPass runs one pass for the gpu pool with a fixed clock.
+func runPass(c client.Client) error {
 	r := &Reconciler{Client: c, Now: func() time.Time { return t0 }}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "gpu"}})
 	return err
@@ -123,7 +123,7 @@ func TestBindsFreeReadyNodes(t *testing.T) {
 		newNode("n3", true, nil),
 		newNode("n4", false, gpu),
 	)
-	if err := reconcile(c); err != nil {
+	if err := runPass(c); err != nil {
 		t.Fatal(err)
 	}
 
@@ -175,7 +175,7 @@ func TestPinnedNodeIsGrantedFirst(t *testing.T) {
 		newNode("n1", true, gpu),
 		newNode("n2", true, gpu),
 	)
-	if err := reconcile(c); err != nil {
+	if err := runPass(c); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,7 +198,7 @@ func TestPreemptionTransfersLeaseAsDraining(t *testing.T) {
 		newNode("n1", true, gpu),
 		newLease("n1", "low"),
 	)
-	if err := reconcile(c); err != nil {
+	if err := runPass(c); err != nil {
 		t.Fatal(err)
 	}
 
@@ -220,7 +220,7 @@ func TestPoolPolicyNeverBlocksPreemption(t *testing.T) {
 		newNode("n1", true, gpu),
 		newLease("n1", "low"),
 	)
-	if err := reconcile(c); err != nil {
+	if err := runPass(c); err != nil {
 		t.Fatal(err)
 	}
 
@@ -240,7 +240,7 @@ func TestSurplusLeaseIsDrainedNotDeleted(t *testing.T) {
 		newLease("n1", "a"),
 		newLeaseAt("n2", "a", t0.Add(time.Hour)),
 	)
-	if err := reconcile(c); err != nil {
+	if err := runPass(c); err != nil {
 		t.Fatal(err)
 	}
 
@@ -262,7 +262,7 @@ func TestMinAboveHealthyNodesIsRejected(t *testing.T) {
 		newVC("a", 5, false, 2, 2, 2),
 		newNode("n1", true, gpu),
 	)
-	if err := reconcile(c); err == nil {
+	if err := runPass(c); err == nil {
 		t.Fatal("want an error: min 2 exceeds the 1 healthy node")
 	}
 	var leases v1alpha1.NodeLeaseList
