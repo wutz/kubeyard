@@ -55,7 +55,16 @@ type Param struct {
 	Title    string
 	Default  any
 	Required bool
+	// Target says where the value goes: TargetValues for the Helm values
+	// document, TargetSubstitute for a Flux postBuild variable.
+	Target string
 }
+
+// Where a parameter's value is written, from x-kubeyard-target in the schema.
+const (
+	TargetValues     = "values"
+	TargetSubstitute = "substitute"
+)
 
 // Status says whether an addon is already in a cluster.
 type Status int
@@ -137,7 +146,7 @@ func Parse(fsys fs.FS) (*Catalog, error) {
 			if err := readJSON(fsys, path.Join(ref.Path, file.Spec.Params), &schema); err != nil {
 				return nil, err
 			}
-			a.Params = flattenParams("", schema, false, nil)
+			a.Params = flattenParams("", schema, false, "", nil)
 		}
 		c.Addons = append(c.Addons, a)
 	}
@@ -214,15 +223,20 @@ type schemaNode struct {
 	Title      string                `json:"title"`
 	Default    any                   `json:"default"`
 	Required   []string              `json:"required"`
+	Target     string                `json:"x-kubeyard-target"`
 	Properties map[string]schemaNode `json:"properties"`
 }
 
 // flattenParams turns nested object properties into dotted paths. Only
-// leaves are kept, sorted by path.
-func flattenParams(prefix string, n schemaNode, required bool, out []Param) []Param {
+// leaves are kept, sorted by path. A leaf without its own target inherits the
+// target of the property above it.
+func flattenParams(prefix string, n schemaNode, required bool, target string, out []Param) []Param {
+	if n.Target != "" {
+		target = n.Target
+	}
 	if len(n.Properties) == 0 {
 		if prefix != "" {
-			out = append(out, Param{Path: prefix, Type: n.Type, Title: n.Title, Default: n.Default, Required: required})
+			out = append(out, Param{Path: prefix, Type: n.Type, Title: n.Title, Default: n.Default, Required: required, Target: target})
 		}
 		return out
 	}
@@ -237,7 +251,7 @@ func flattenParams(prefix string, n schemaNode, required bool, out []Param) []Pa
 		if prefix != "" {
 			p = prefix + "." + k
 		}
-		out = flattenParams(p, child, contains(n.Required, k), out)
+		out = flattenParams(p, child, contains(n.Required, k), target, out)
 	}
 	return out
 }

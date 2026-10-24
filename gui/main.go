@@ -1,7 +1,7 @@
 // Command gui is the Kubeyard desktop client. M1 covers connecting to
-// kubeconfig contexts, a read-only cluster overview, and a read-only list of
-// the catalog's components with the ones already in the cluster marked. It
-// talks to the API server directly; there is no backend.
+// kubeconfig contexts, a cluster overview, and the catalog's components: their
+// parameters, installing and uninstalling the ones Kubeyard manages, and their
+// Flux status. It talks to the API server directly; there is no backend.
 package main
 
 import (
@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -22,11 +25,8 @@ import (
 )
 
 const (
-	loadTimeout = 15 * time.Second
-
-	// The catalog source Kubeyard creates in every cluster it manages.
-	sourceNamespace = "kubeyard-system"
-	sourceName      = "catalog-default"
+	loadTimeout   = 15 * time.Second
+	actionTimeout = 30 * time.Second
 )
 
 type page int
@@ -42,18 +42,35 @@ type loaded struct {
 	catalog  catalogState
 }
 
-// catalogState is the catalog served by the cluster's source, and which of
-// its components the cluster already has.
+// catalogState is the catalog served by the cluster's source, and what the
+// cluster already runs of it.
 type catalogState struct {
 	source    kube.Source
 	hasSource bool
 	cat       *catalog.Catalog
-	status    map[string]catalog.Status
+	// status and managed are keyed by addon name. managed means Kubeyard
+	// installed the addon, so its Kustomization exists.
+	status  map[string]catalog.Status
+	managed map[string]bool
+	// flux is the Flux state of each managed addon.
+	flux map[string]kube.AddonFlux
 	// note is muted text for a state that is not an error, such as no source.
 	note string
 	// err explains why a source exists but its catalog cannot be shown.
 	err string
+	// fluxErr explains why some Flux state could not be read.
+	fluxErr string
 }
+
+// paramField is the form input for one parameter. Booleans use on; strings
+// and integers use text, where empty means the schema default applies.
+type paramField struct {
+	text string
+	on   bool
+}
+
+// action is a cluster write. It runs off the main thread.
+type action func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error
 
 // app is the state the window shows. Background loads write to it through
 // win.Update, so the fields are only touched on the main thread.
@@ -71,6 +88,18 @@ type app struct {
 
 	addons   ui.ListState
 	selAddon int
+
+	// formFor is the addon the form fields belong to. The form resets when
+	// another addon is selected.
+	formFor string
+	fields  map[string]*paramField
+	// confirm names the action waiting for its second click: "install" or
+	// "uninstall".
+	confirm string
+	busy    bool
+	// notice and actionErr report the outcome of the last cluster write.
+	notice    string
+	actionErr string
 }
 
 // view builds the interface from the state on the main thread.
@@ -190,7 +219,7 @@ func (a *app) catalogPage(c *ui.Context) {
 		if cs.cat == nil {
 			return
 		}
-		ui.Text(c, "只读：安装、升级与卸载在后续版本加入。已存在的组件不会被重复安装。").TextColor(t.TextMuted)
+		ui.Text(c, "安装与卸载只作用于 Kubeyard 管理的组件；已存在的组件不会被重复安装。").TextColor(t.TextMuted)
 		a.addonTable(c, cs)
 		a.addonDetail(c, cs)
 	})
@@ -239,18 +268,239 @@ func (a *app) addonDetail(c *ui.Context, cs catalogState) {
 		return
 	}
 	ad := addons[a.selAddon]
-	ui.Column(c).Padding(14).Gap(6).Background(t.Surface).Radius(10).Border(1, t.Border).Children(func() {
+	a.resetForm(ad)
+	ui.Column(c).Grow(1).Padding(14).Gap(8).Background(t.Surface).Radius(10).Border(1, t.Border).Children(func() {
 		ui.Text(c, ad.DisplayName).FontSize(16).Bold()
 		ui.Text(c, ad.Description).TextColor(t.TextMuted)
 		ui.Text(c, fmt.Sprintf("命名空间 %s · 健康检查 %s", ad.Namespace, healthText(ad.Health))).FontSize(12).TextColor(t.TextMuted)
-		if len(ad.Params) == 0 {
-			ui.Text(c, "无参数").FontSize(12).TextColor(t.TextMuted)
-			return
+		ui.Scroll(c).Grow(1).Children(func() {
+			ui.Column(c).Gap(8).Children(func() {
+				a.fluxView(c, cs, ad)
+				a.paramForm(c, ad)
+			})
+		})
+		a.actions(c, cs, ad)
+	})
+}
+
+// fluxView shows the Flux state of an addon Kubeyard manages: the Ready
+// conditions of its Kustomization and HelmReleases, then the latest events.
+func (a *app) fluxView(c *ui.Context, cs catalogState, ad catalog.Addon) {
+	t := c.Theme()
+	if !cs.managed[ad.Name] {
+		if cs.status[ad.Name] == catalog.Installed {
+			ui.Text(c, "由其他方式安装，Kubeyard 不管理它，也不显示 Flux 状态").FontSize(12).TextColor(t.TextMuted)
 		}
-		for _, p := range ad.Params {
-			ui.Text(c, paramLine(p)).FontSize(12).SingleLine()
+		return
+	}
+	fx, ok := cs.flux[ad.Name]
+	if !ok {
+		ui.Text(c, orDash(cs.fluxErr)).FontSize(12).TextColor(t.TextMuted)
+		return
+	}
+	for _, cond := range fx.Conditions {
+		text, color := "Ready", t.Success
+		if !cond.Ready {
+			text, color = "未就绪", t.Danger
+		}
+		ui.Text(c, fmt.Sprintf("%s/%s  %s  %s", cond.Kind, cond.Name, text, cond.Message)).FontSize(12).TextColor(color).SingleLine()
+	}
+	for _, ev := range fx.Events {
+		ui.Text(c, fmt.Sprintf("%s  %s  %s  %s", ev.Time.Local().Format("15:04:05"), ev.Reason, ev.Object, ev.Message)).FontSize(12).TextColor(t.TextMuted).SingleLine()
+	}
+}
+
+// paramForm shows one input per parameter, in the order the schema lists them.
+func (a *app) paramForm(c *ui.Context, ad catalog.Addon) {
+	t := c.Theme()
+	if len(ad.Params) == 0 {
+		ui.Text(c, "无参数").FontSize(12).TextColor(t.TextMuted)
+		return
+	}
+	for _, p := range ad.Params {
+		f := a.fields[p.Path]
+		ui.Row(c.Key(p.Path)).AlignItems(ui.Center).Gap(10).Children(func() {
+			ui.Text(c, paramLabel(p)).FontSize(12).SingleLine()
+			if p.Type == "boolean" {
+				ui.Checkbox(c.Key(p.Path), &f.on, p.Title)
+				return
+			}
+			ui.TextInput(c.Key(p.Path), &f.text).Placeholder(placeholder(p)).Width(320)
+		})
+	}
+}
+
+// actions shows install and uninstall, each behind a second click. A button
+// is disabled when the guard refuses, and the reason is shown below.
+func (a *app) actions(c *ui.Context, cs catalogState, ad catalog.Addon) {
+	t := c.Theme()
+	installErr := ad.Installable(cs.status[ad.Name], cs.status)
+	uninstallErr := cs.cat.Uninstallable(ad.Name, cs.status, cs.managed[ad.Name])
+	ui.Column(c).Gap(4).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+			installLabel := "安装"
+			if a.confirm == "install" {
+				installLabel = "确认安装"
+			}
+			if ui.Button(c.Key("install"), installLabel).Disabled(installErr != nil || a.busy).Clicked() {
+				if a.confirm == "install" {
+					a.confirm = ""
+					a.install(cs.cat, ad)
+				} else {
+					a.confirm = "install"
+				}
+			}
+			uninstallLabel := "卸载"
+			if a.confirm == "uninstall" {
+				uninstallLabel = "确认卸载"
+			}
+			if ui.Button(c.Key("uninstall"), uninstallLabel).Disabled(uninstallErr != nil || a.busy).Clicked() {
+				if a.confirm == "uninstall" {
+					a.confirm = ""
+					a.uninstall(cs.cat, ad.Name)
+				} else {
+					a.confirm = "uninstall"
+				}
+			}
+			if a.confirm != "" {
+				if ui.Button(c.Key("cancel"), "取消").Clicked() {
+					a.confirm = ""
+				}
+			}
+			if a.busy {
+				ui.Text(c, "正在提交到集群…").TextColor(t.TextMuted)
+			}
+		})
+		if a.actionErr != "" {
+			ui.Text(c, a.actionErr).FontSize(12).TextColor(t.Danger)
+		}
+		if a.notice != "" {
+			ui.Text(c, a.notice).FontSize(12).TextColor(t.Success)
+		}
+		if installErr != nil {
+			ui.Text(c, "安装："+installErr.Error()).FontSize(12).TextColor(t.TextMuted)
+		}
+		if uninstallErr != nil {
+			ui.Text(c, "卸载："+uninstallErr.Error()).FontSize(12).TextColor(t.TextMuted)
 		}
 	})
+}
+
+// install validates the form, then writes the addon in the background. The
+// guard is checked again against the cluster before anything is written.
+func (a *app) install(cat *catalog.Catalog, ad catalog.Addon) {
+	values, err := a.formValues(ad)
+	if err != nil {
+		a.actionErr = err.Error()
+		return
+	}
+	helm, substitute, err := ad.Render(values)
+	if err != nil {
+		a.actionErr = err.Error()
+		return
+	}
+	a.act("安装", "已提交安装，Flux 正在协调，状态会在刷新后更新", func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+		inv, err := kube.LoadInventory(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		statuses := cat.Statuses(inv.Has)
+		if err := ad.Installable(statuses[ad.Name], statuses); err != nil {
+			return err
+		}
+		return kube.Install(ctx, cs, dc, kube.Addon{
+			Name:       ad.Name,
+			Namespace:  ad.Namespace,
+			DependsOn:  ad.DependsOn,
+			Values:     helm,
+			Substitute: substitute,
+		})
+	})
+}
+
+// uninstall removes an addon Kubeyard installed. The guard is checked again
+// against the cluster before anything is deleted.
+func (a *app) uninstall(cat *catalog.Catalog, name string) {
+	a.act("卸载", "已提交卸载，Flux 回收完成后状态会更新", func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+		inv, err := kube.LoadInventory(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		if err := cat.Uninstallable(name, cat.Statuses(inv.Has), inv.Managed(name)); err != nil {
+			return err
+		}
+		return kube.Uninstall(ctx, cs, dc, name)
+	})
+}
+
+// act runs a cluster write for the selected context in the background, then
+// reloads the context. done is shown when the write succeeds.
+func (a *app) act(label, done string, fn action) {
+	name := a.selected
+	a.busy = true
+	a.actionErr = ""
+	a.notice = ""
+	go func() {
+		err := runAction(name, fn)
+		a.win.Update(func() {
+			a.busy = false
+			if err != nil {
+				a.actionErr = label + "失败：" + err.Error()
+				return
+			}
+			a.notice = done
+			a.refresh()
+		})
+	}()
+}
+
+// formValues reads the form into parameter values keyed by path, for
+// catalog.Addon.Render. An empty optional field is left out, so the schema
+// default applies.
+func (a *app) formValues(ad catalog.Addon) (map[string]any, error) {
+	values := make(map[string]any, len(ad.Params))
+	for _, p := range ad.Params {
+		f := a.fields[p.Path]
+		if p.Type == "boolean" {
+			values[p.Path] = f.on
+			continue
+		}
+		text := strings.TrimSpace(f.text)
+		if text == "" {
+			if p.Required {
+				return nil, fmt.Errorf("%s 必填", p.Path)
+			}
+			continue
+		}
+		if p.Type == "integer" {
+			n, err := strconv.Atoi(text)
+			if err != nil {
+				return nil, fmt.Errorf("%s 必须是整数", p.Path)
+			}
+			values[p.Path] = n
+			continue
+		}
+		values[p.Path] = text
+	}
+	return values, nil
+}
+
+// resetForm starts the form over when another addon is selected. Booleans
+// start at their schema default; other fields start empty.
+func (a *app) resetForm(ad catalog.Addon) {
+	if a.formFor == ad.Name {
+		return
+	}
+	a.formFor = ad.Name
+	a.fields = make(map[string]*paramField, len(ad.Params))
+	a.confirm = ""
+	a.actionErr = ""
+	a.notice = ""
+	for _, p := range ad.Params {
+		f := &paramField{}
+		f.on, _ = p.Default.(bool)
+		a.fields[p.Path] = f
+	}
 }
 
 // refresh loads the selected context in the background.
@@ -289,6 +539,10 @@ func load(contextName string) (loaded, error) {
 	if err != nil {
 		return loaded{}, err
 	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return loaded{}, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	defer cancel()
 
@@ -300,16 +554,16 @@ func load(contextName string) (loaded, error) {
 	if err != nil {
 		return loaded{}, err
 	}
-	return loaded{overview: ov, catalog: loadCatalog(ctx, cfg, inv)}, nil
+	return loaded{overview: ov, catalog: loadCatalog(ctx, cfg, cs, dc, inv)}, nil
 }
 
 // loadCatalog reads the catalog at the revision the source's Flux
 // OCIRepository verified. Nothing from an unverified source is shown.
-func loadCatalog(ctx context.Context, cfg *rest.Config, inv kube.Inventory) catalogState {
+func loadCatalog(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface, inv kube.Inventory) catalogState {
 	var out catalogState
-	src, err := kube.LoadSource(ctx, cfg, sourceNamespace, sourceName)
+	src, err := kube.LoadSource(ctx, cfg, kube.CatalogNamespace, kube.CatalogSource)
 	if errors.Is(err, kube.ErrNoSource) {
-		out.note = fmt.Sprintf("集群中没有 catalog 源 %s/%s", sourceNamespace, sourceName)
+		out.note = fmt.Sprintf("集群中没有 catalog 源 %s/%s", kube.CatalogNamespace, kube.CatalogSource)
 		return out
 	}
 	if err != nil {
@@ -339,11 +593,52 @@ func loadCatalog(ctx context.Context, cfg *rest.Config, inv kube.Inventory) cata
 		return out
 	}
 	out.cat = cat
-	out.status = make(map[string]catalog.Status, len(cat.Addons))
+	out.status = cat.Statuses(inv.Has)
+	out.managed = make(map[string]bool, len(cat.Addons))
+	out.flux = make(map[string]kube.AddonFlux)
 	for _, ad := range cat.Addons {
-		out.status[ad.Name] = ad.Status(inv.Has)
+		out.managed[ad.Name] = inv.Managed(ad.Name)
+		if !out.managed[ad.Name] {
+			continue
+		}
+		fx, err := kube.LoadAddonFlux(ctx, dc, cs, ad.Name, helmReleaseNames(ad))
+		if err != nil {
+			out.fluxErr = "读取 Flux 状态失败：" + err.Error()
+			continue
+		}
+		out.flux[ad.Name] = fx
 	}
 	return out
+}
+
+// runAction builds clients for a context and runs fn with a bounded context.
+func runAction(contextName string, fn action) error {
+	cfg, err := kube.RESTConfig(contextName)
+	if err != nil {
+		return err
+	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+	defer cancel()
+	return fn(ctx, cfg, cs, dc)
+}
+
+// helmReleaseNames lists the HelmReleases an addon's health checks name.
+func helmReleaseNames(ad catalog.Addon) []string {
+	var names []string
+	for _, h := range ad.Health {
+		if h.Kind == "HelmRelease" {
+			names = append(names, h.Name)
+		}
+	}
+	return names
 }
 
 func sourceLine(cs catalogState) string {
@@ -385,15 +680,29 @@ func healthText(health []catalog.Health) string {
 	return out
 }
 
-func paramLine(p catalog.Param) string {
-	line := fmt.Sprintf("%s  %s  默认 %v", p.Path, p.Type, p.Default)
+// paramLabel is a form row's label: the parameter path, marked when required.
+func paramLabel(p catalog.Param) string {
 	if p.Required {
-		line += "  必填"
+		return p.Path + " *"
 	}
-	if p.Title != "" {
-		line += "  " + p.Title
+	return p.Path
+}
+
+// placeholder is the hint an empty field shows: the schema default, or the
+// parameter's title when it has no default.
+func placeholder(p catalog.Param) string {
+	if p.Default == nil {
+		return p.Title
 	}
-	return line
+	return "默认 " + defaultText(p.Default)
+}
+
+// defaultText renders a schema default for display.
+func defaultText(v any) string {
+	if d, ok := v.(float64); ok && d == math.Trunc(d) {
+		return strconv.FormatInt(int64(d), 10)
+	}
+	return fmt.Sprint(v)
 }
 
 // shortRevision shortens the digest in "tag@sha256:…" for display.

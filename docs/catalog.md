@@ -61,9 +61,18 @@ spec:
       name: gpu-operator
 ```
 
+### 参数归属：x-kubeyard-target
+
+`schema.json` 的每个顶层属性必须标 `x-kubeyard-target`，说明表单的值写到哪里。属性下的叶子参数继承该标记：
+
+- `values`：写入 `addon-<name>-params` ConfigMap 的 `values.yaml`，由 HelmRelease 的 `valuesFrom` 读取。
+- `substitute`：作为 Flux `postBuild.substitute` 变量注入清单，清单中以 `${参数名}` 引用，并带默认值（如 `${metallb_addresses:=192.0.2.10-192.0.2.20}`）。
+
+`scripts/validate.py` 检查：每个顶层属性都有合法的 `x-kubeyard-target`；`substitute` 参数必须在清单中以 `${参数名` 出现，并且在允许的变量列表内。新增变量时两处都要改。
+
 ## 3. 安装模型
 
-GUI 安装一个 addon 只创建三类对象，全部在 `kubeyard-system` 命名空间：
+GUI 安装一个 addon 只创建两类对象，全部在 `kubeyard-system` 命名空间：
 
 ```yaml
 # 1) 源（每个 catalog 源一个，添加源时创建）
@@ -104,7 +113,14 @@ spec:
     substitute: { addon_namespace: gpu-operator }
 ```
 
-addon 自己的 HelmRelease（`helm.toolkit.fluxcd.io/v2`）用 `valuesFrom` 引用上面的 ConfigMap。卸载 = 删除 Kustomization（`prune: true` 负责清理）；升级 = 改 OCIRepository 的 tag，或修改 addon 参数。
+addon 自己的 HelmRelease（`helm.toolkit.fluxcd.io/v2`）用 `valuesFrom` 引用上面的 ConfigMap。卸载 = 删除 Kustomization（`prune: true` 负责清理）再删除参数 ConfigMap；升级 = 改 OCIRepository 的 tag，或修改 addon 参数。
+
+安装与卸载的守卫（`catalog.Addon.Installable` / `Catalog.Uninstallable`），在写入前用集群的最新状态重新检查：
+
+- 安装：只有状态为"未安装"才允许。已安装、已存在（有 Deployment / DaemonSet 但无 Helm release，即非 Kubeyard 安装）、无法判断的组件都拒绝；每个依赖必须已安装或已存在。
+- 卸载：只允许 Kubeyard 管理的组件（即存在 `addon-<name>` Kustomization）。被其他已安装 / 已存在组件依赖时拒绝，需先卸载依赖方。
+
+"无法判断"指健康检查只有 Kustomization 或 CRD 等无法用 Helm release / 工作负载查询的对象。这类组件（如 gateway-api-crds）不会被当作未安装，依赖它的组件因此也无法安装，直到补上 CRD 检测。
 
 Flux 本身用 [flux-operator](https://github.com/controlplaneio-fluxcd/flux-operator) 安装：GUI apply operator 的 chart 后创建一个 `FluxInstance`（`flux-system/flux`），升级 Flux 只改这个对象，不用 shell 调 `flux bootstrap`。v1 的 addon 仍用上面的 Kustomization + ConfigMap，只依赖 Flux 核心 API，作者门槛更低；若后续需要"同一 addon 按虚拟集群批量实例化"，再评估切换到 flux-operator 的 ResourceSet。具体版本在 M1 从各 releases 页面锁定。
 

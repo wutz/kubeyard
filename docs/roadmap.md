@@ -20,6 +20,16 @@
 - 组件页：浏览、按 schema 填参数、安装 / 升级 / 卸载、查看 Flux 状态与事件
 - 技术验证：mygo 概览页与节点表格（用于兜底判断）
 
+状态（M1 进行中）：
+
+- [x] 概览、节点表格、kubeconfig context 切换
+- [x] catalog 仓库：8 个 host 组件，cosign 签名发布到 GHCR，参数归属由 `x-kubeyard-target` 标记
+- [x] 组件页：只读列表（已安装 / 已存在 / 未安装 / 无法判断）、参数表单、安装 / 卸载（二次确认，守卫在写入前复查）
+- [x] 组件的 Flux 状态与最近事件（仅 Kubeyard 管理的组件）
+- [ ] 升级（改 OCIRepository tag 或参数）
+- [ ] 一键安装 Flux（flux-operator）：待定安装方式
+- [ ] 添加 catalog 源：待定 cosign 公钥来源
+
 ## M2 虚拟集群与资源池
 
 - kubeyard-operator host 模式：VirtualCluster、NodePool、NodeLease
