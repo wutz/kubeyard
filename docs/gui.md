@@ -78,7 +78,7 @@
 
 - macOS：WKWebView
 - Windows：WebView2（需要运行时，Windows 10/11 通常已预装）
-- Linux：WebKitGTK
+- Linux：WebKitGTK 4.0（webview_go 链接 `webkit2gtk-4.0`）
 
 API 直接用 `pkg/kube`、`pkg/catalog` 访问 API Server，与 operator 共用同一套业务代码，没有额外的后端服务。
 
@@ -104,7 +104,7 @@ API 直接用 `pkg/kube`、`pkg/catalog` 访问 API Server，与 operator 共用
 - `-debug` 打开 webview 的开发者工具
 - `-addr` 指定监听地址（默认 `127.0.0.1:0`，随机端口）
 
-构建要求：webview_go 使用 cgo，本地构建需要 C 编译器（macOS 为 Xcode Command Line Tools，Linux 为 `libwebkit2gtk-4.1-dev` 等）。`pkg/` 不依赖 webview，operator 仍可纯 Go 构建。
+构建要求：webview_go 使用 cgo，本地构建需要 C 编译器（macOS 为 Xcode Command Line Tools，Linux 为 `libgtk-3-dev libwebkit2gtk-4.0-dev`）。CI（`.github/workflows/ci.yml`）在 Linux、macOS、Windows 上构建并测试全部包，包括 GUI。`pkg/` 不依赖 webview，operator 仍可纯 Go 构建。
 
 风险与对策：
 
