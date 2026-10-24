@@ -164,9 +164,26 @@ func TestStatus(t *testing.T) {
 		t.Errorf("gpu with deployment only = %v, want Existing", got)
 	}
 
-	crdOnly := Addon{Name: "gateway", Namespace: "kube-system", Health: []Health{{Kind: "Kustomization", Name: "addon-gateway"}}}
-	if got := crdOnly.Status(has); got != Unknown {
+	// Flux records a Kubeyard install's release in ManagedNamespace, not in the
+	// addon's namespace.
+	managed := map[string]bool{"HelmRelease/" + ManagedNamespace + "/nfd": true}
+	managedHas := func(kind, ns, name string) bool { return managed[kind+"/"+ns+"/"+name] }
+	if got := nfd.Status(managedHas); got != Installed {
+		t.Errorf("nfd with release in %s = %v, want Installed", ManagedNamespace, got)
+	}
+
+	kustomizationOnly := Addon{Name: "gateway", Namespace: "kube-system", Health: []Health{{Kind: "Kustomization", Name: "addon-gateway"}}}
+	if got := kustomizationOnly.Status(has); got != Unknown {
 		t.Errorf("non-Helm health = %v, want Unknown", got)
+	}
+
+	crd := Addon{Name: "gateway-api-crds", Namespace: "kube-system", Health: []Health{{Kind: "CustomResourceDefinition", Name: "gateways.gateway.networking.k8s.io"}}}
+	if got := crd.Status(has); got != Absent {
+		t.Errorf("CRD missing = %v, want Absent", got)
+	}
+	releases["CustomResourceDefinition//gateways.gateway.networking.k8s.io"] = true
+	if got := crd.Status(has); got != Existing {
+		t.Errorf("CRD present = %v, want Existing", got)
 	}
 }
 

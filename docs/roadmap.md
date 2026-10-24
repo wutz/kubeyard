@@ -10,7 +10,7 @@
 - [x] 接受 mygo 1.0 前的风险
 - [x] 不引入租户实体，以虚拟集群为单位设计
 - [x] 普通用户 kubeconfig 不过期、可撤销
-- [ ] 设计 PR 合并
+- [x] 设计 PR 合并
 
 ## M1 连接与 catalog
 
@@ -19,6 +19,26 @@
 - catalog 仓库：从 k8s-in-action 迁移 host profile（nfd、spegel、metallb、cert-manager、istio、gpu-operator、metrics-server）
 - 组件页：浏览、按 schema 填参数、安装 / 升级 / 卸载、查看 Flux 状态与事件
 - 技术验证：mygo 概览页与节点表格（用于兜底判断）
+
+状态（M1 以未完成状态关闭）：
+
+- [x] 概览、节点表格、kubeconfig context 切换
+- [x] catalog 仓库：8 个 host 组件，cosign 签名发布到 GHCR，参数归属由 `x-kubeyard-target` 标记
+- [x] 组件页：只读列表（已安装 / 已存在 / 未安装 / 无法判断）、参数表单、安装 / 卸载（二次确认，守卫在写入前复查）
+- [x] 组件的 Flux 状态与最近事件（仅 Kubeyard 管理的组件）
+- [x] 健康检查支持 CRD（`CustomResourceDefinition`），gateway-api-crds 据此判断
+- [x] 参数更新：表单以集群中存储的参数为初值，只对 Kubeyard 管理的组件开放
+- [x] 一键安装 Flux：Helm SDK 从 OCI 拉取 flux-operator 0.61.0，再创建 FluxInstance；已有 Flux 时拒绝
+- [x] 添加 catalog 源：公钥随二进制嵌入，创建校验签名的 OCIRepository；源已存在或 Flux 未安装时不显示
+- 版本升级不作为 GUI 操作：OCIRepository 跟随 stable tag 由 Flux 自动拉取（范围决定，见 catalog.md）
+- [ ] 写入路径的端到端验证未完成（M1 未完成关闭的原因）。
+  - k3d 上已通过：Flux 安装、重复安装拒绝、添加 catalog 源（cosign 校验通过）、安装 nfd（状态识别为已安装）、重复安装拒绝、卸载（Kustomization、参数、HelmRelease、Helm release 与工作负载全部移除）。参数更新只写入 ConfigMap，因 catalog 内联 values 覆盖而不生效；修复已发布为 catalog v2026.10.4（k3d 上 nfd 2→1→3 生效）。
+  - bz1-dev1 上：仅新增了 Flux 与 catalog 源（由本项目创建）。nfd、gpu-operator 等为非 Kubeyard 安装，只读检查完成，未修改。
+  - bz1-dev1 上 forgeai 的手动卸载已执行：Project `forge-demo/demo`、forge-demo 的 5 个 Sandbox、forgeai CRD 与 RBAC 已删除。`forge-demo` 命名空间与 3 个 PVC（130Gi）因 Project 的 `deletionPolicy: Retain` 保留。
+  - forgeai 重装：chart 0.3.0 把 `command` 写死为 `/manager`，而发布镜像的入口是 `/ko-app/cmd`，控制器 CrashLoop。修复在 [wutz/forgeai#58](https://github.com/wutz/forgeai/pull/58)（已合并），发版 [chart 0.3.1](https://github.com/wutz/forgeai/releases/tag/v0.3.1)（[#59](https://github.com/wutz/forgeai/pull/59)）。bz1-dev1 已于 0.3.1 重新安装 forgeai（`helm install` 从 OCI，控制器 1/1 Running，镜像 `ghcr.io/wutz/forgeai:0.3.1`）。0.3.1 新增 CRD `inferenceservices.forgeai.wutz.dev`，catalog 的卸载警告目前只列出 `projects` CRD，需补全。
+  - 发现：chart 的 CRD 带 `helm.sh/resource-policy: keep`，`helm uninstall` 后 CRD 保留，需手动清理。卸载 forgeai 时 Kubeyard 的警告应说明这一点。
+  - GUI 验证结果未提供。
+  - catalog 的 forgeai 与 agent-sandbox 条目已合并（[wutz/kubeyard-catalog#4](https://github.com/wutz/kubeyard-catalog/pull/4)），并以 `v2026.10.5` 发布；stable 指向该版本，cosign 校验通过，forgeai 为 chart 0.3.1。bz1-dev1 的 catalog 源仍为 v2026.10.4，将在下次 1h 协调时更新。
 
 ## M2 虚拟集群与资源池
 

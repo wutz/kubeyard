@@ -55,41 +55,62 @@ type Param struct {
 	Title    string
 	Default  any
 	Required bool
+	// Target says where the value goes: TargetValues for the Helm values
+	// document, TargetSubstitute for a Flux postBuild variable.
+	Target string
 }
+
+// Where a parameter's value is written, from x-kubeyard-target in the schema.
+const (
+	TargetValues     = "values"
+	TargetSubstitute = "substitute"
+)
 
 // Status says whether an addon is already in a cluster.
 type Status int
 
 const (
-	// Unknown means no health entry can be checked with Helm and workload
-	// lookups, such as a CRD-only addon.
+	// Unknown means no health entry can be checked with Helm release, workload
+	// or CRD lookups, such as a Kustomization.
 	Unknown Status = iota
 	// Absent means the addon's health objects are missing.
 	Absent
-	// Existing means a workload of the addon runs, but no Helm release for
-	// it exists. The component was installed by other means, so it must not
-	// be installed again.
+	// Existing means a workload or CRD of the addon is present, but no Helm
+	// release for it exists. The component was installed by other means, so
+	// it must not be installed again.
 	Existing
 	// Installed means the addon's Helm release exists.
 	Installed
 )
 
+// ManagedNamespace holds the Flux objects Kubeyard creates for each addon. Flux
+// stores a release in the namespace of its HelmRelease object, so a release
+// installed by Kubeyard is recorded here, not in the addon's namespace.
+const ManagedNamespace = "kubeyard-system"
+
 // Status checks the addon against a cluster. has reports whether an object of
-// the given kind exists, using the kinds "HelmRelease", "Deployment" and
-// "DaemonSet".
+// the given kind exists, using the kinds "HelmRelease", "Deployment",
+// "DaemonSet" and "CustomResourceDefinition" (cluster-scoped, so its namespace
+// is empty).
 func (a Addon) Status(has func(kind, namespace, name string) bool) Status {
 	checkable := false
 	existing := false
 	for _, h := range a.Health {
-		if h.Kind != "HelmRelease" {
-			continue
-		}
-		checkable = true
-		if has("HelmRelease", a.Namespace, h.Name) {
-			return Installed
-		}
-		if has("Deployment", a.Namespace, h.Name) || has("DaemonSet", a.Namespace, h.Name) {
-			existing = true
+		switch h.Kind {
+		case "HelmRelease":
+			checkable = true
+			// A release Helm installed directly is recorded in the addon's namespace.
+			if has("HelmRelease", ManagedNamespace, h.Name) || has("HelmRelease", a.Namespace, h.Name) {
+				return Installed
+			}
+			if has("Deployment", a.Namespace, h.Name) || has("DaemonSet", a.Namespace, h.Name) {
+				existing = true
+			}
+		case "CustomResourceDefinition":
+			checkable = true
+			if has("CustomResourceDefinition", "", h.Name) {
+				existing = true
+			}
 		}
 	}
 	switch {
@@ -137,7 +158,7 @@ func Parse(fsys fs.FS) (*Catalog, error) {
 			if err := readJSON(fsys, path.Join(ref.Path, file.Spec.Params), &schema); err != nil {
 				return nil, err
 			}
-			a.Params = flattenParams("", schema, false, nil)
+			a.Params = flattenParams("", schema, false, "", nil)
 		}
 		c.Addons = append(c.Addons, a)
 	}
@@ -214,15 +235,20 @@ type schemaNode struct {
 	Title      string                `json:"title"`
 	Default    any                   `json:"default"`
 	Required   []string              `json:"required"`
+	Target     string                `json:"x-kubeyard-target"`
 	Properties map[string]schemaNode `json:"properties"`
 }
 
 // flattenParams turns nested object properties into dotted paths. Only
-// leaves are kept, sorted by path.
-func flattenParams(prefix string, n schemaNode, required bool, out []Param) []Param {
+// leaves are kept, sorted by path. A leaf without its own target inherits the
+// target of the property above it.
+func flattenParams(prefix string, n schemaNode, required bool, target string, out []Param) []Param {
+	if n.Target != "" {
+		target = n.Target
+	}
 	if len(n.Properties) == 0 {
 		if prefix != "" {
-			out = append(out, Param{Path: prefix, Type: n.Type, Title: n.Title, Default: n.Default, Required: required})
+			out = append(out, Param{Path: prefix, Type: n.Type, Title: n.Title, Default: n.Default, Required: required, Target: target})
 		}
 		return out
 	}
@@ -237,7 +263,7 @@ func flattenParams(prefix string, n schemaNode, required bool, out []Param) []Pa
 		if prefix != "" {
 			p = prefix + "." + k
 		}
-		out = flattenParams(p, child, contains(n.Required, k), out)
+		out = flattenParams(p, child, contains(n.Required, k), target, out)
 	}
 	return out
 }
