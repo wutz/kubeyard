@@ -84,6 +84,29 @@ func TestInstallUpdatesExisting(t *testing.T) {
 	}
 }
 
+// Flux reconciles a HelmRelease when its values ConfigMap changes only if the
+// ConfigMap carries the watch label, and every update must keep it.
+func TestInstallLabelsParamsForFluxWatch(t *testing.T) {
+	ctx := context.Background()
+	cs := kubefake.NewClientset()
+	dc := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	a := testAddon()
+	for _, step := range []string{"install", "update"} {
+		if err := Install(ctx, cs, dc, a); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+		cm, err := cs.CoreV1().ConfigMaps(CatalogNamespace).Get(ctx, "addon-metallb-params", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cm.Labels[watchLabel]; got != "Enabled" {
+			t.Errorf("after %s: %s = %q, want Enabled", step, watchLabel, got)
+		}
+		a.Values = map[string]any{"driver": map[string]any{"enabled": false}}
+	}
+}
+
 func TestLoadAddonParamsReadsWhatWasInstalled(t *testing.T) {
 	ctx := context.Background()
 	cs := kubefake.NewClientset()
@@ -129,5 +152,38 @@ func TestUninstallRemovesObjectsAndToleratesMissing(t *testing.T) {
 	}
 	if err := Uninstall(ctx, cs, dc, "metallb"); err != nil {
 		t.Errorf("second Uninstall: %v", err)
+	}
+}
+
+// Flux adds its finalizer to a Kustomization after reconciling it. Kubeyard's
+// own update must keep that finalizer, or deleting the Kustomization skips the
+// prune and leaves the HelmRelease running.
+func TestInstallKeepsFluxFinalizer(t *testing.T) {
+	ctx := context.Background()
+	cs := kubefake.NewClientset()
+	dc := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	kzClient := dc.Resource(kustomizations).Namespace(CatalogNamespace)
+
+	if err := Install(ctx, cs, dc, testAddon()); err != nil {
+		t.Fatal(err)
+	}
+	kz, err := kzClient.Get(ctx, "addon-metallb", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kz.SetFinalizers([]string{"finalizers.fluxcd.io"})
+	if _, err := kzClient.Update(ctx, kz, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Install(ctx, cs, dc, testAddon()); err != nil {
+		t.Fatal(err)
+	}
+	kz, err = kzClient.Get(ctx, "addon-metallb", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kz.GetFinalizers(); len(got) != 1 || got[0] != "finalizers.fluxcd.io" {
+		t.Errorf("finalizers after update = %v, want the Flux finalizer kept", got)
 	}
 }

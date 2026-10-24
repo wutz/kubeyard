@@ -18,7 +18,7 @@
 - 一键安装 Flux（flux-operator），添加 OCI catalog 源（GHCR，cosign 校验）
 - catalog 仓库：从 k8s-in-action 迁移 host profile（nfd、spegel、metallb、cert-manager、istio、gpu-operator、metrics-server）
 - 组件页：浏览、按 schema 填参数、安装 / 升级 / 卸载、查看 Flux 状态与事件
-- 技术验证：mygo 概览页与节点表格（用于兜底判断）
+- 技术验证：webview 概览页与节点表格（GUI 实现改为 webview，见 [GUI 设计](gui.md) §5）
 
 状态（M1 以未完成状态关闭）：
 
@@ -31,7 +31,13 @@
 - [x] 一键安装 Flux：Helm SDK 从 OCI 拉取 flux-operator 0.61.0，再创建 FluxInstance；已有 Flux 时拒绝
 - [x] 添加 catalog 源：公钥随二进制嵌入，创建校验签名的 OCIRepository；源已存在或 Flux 未安装时不显示
 - 版本升级不作为 GUI 操作：OCIRepository 跟随 stable tag 由 Flux 自动拉取（范围决定，见 catalog.md）
+- [x] GUI 改为 webview：本地 loopback 服务 + 系统 webview，token / Host / CSP 保护，业务逻辑沿用 `pkg/`
 - [ ] 写入路径的端到端验证未完成（M1 未完成关闭的原因）。
+  - 2026-10-24，GUI 在 k3d 上验证（headless 服务，经 API 与浏览器页面操作）：`/api/contexts`、`/api/overview`、`/api/catalog` 返回正确；守卫拒绝重复安装 Flux、重复添加 catalog 源、重复安装 nfd、卸载非 Kubeyard 组件、未知组件，错误 token 返回 401，外部 Host 返回 403。卸载 nfd 后经 API 重新安装，Flux 协调到 Ready；参数更新经 API 与组件页两种方式都在 Deployment 上生效（nfd master 2→3→2）。
+  - 发现并修复：参数 ConfigMap 未带 Flux 的 `reconcile.fluxcd.io/watch=Enabled` 标签，参数更新要等 Kustomization / HelmRelease 的 10 分钟间隔才生效（手动 reconcile 即时生效）。现在安装与更新都写入该标签，k3d 上更新约 5 秒生效，由 `TestInstallLabelsParamsForFluxWatch` 覆盖。
+  - 发现并修复：Kubeyard 更新 Kustomization 时整对象 Update 会丢掉 Flux 的 `finalizers.fluxcd.io`，之后卸载会跳过 prune，HelmRelease 与工作负载残留（2026-10-24 在 k3d 复现：卸载后 HelmRelease 仍被协调，参数 ConfigMap 已删，Helm 回退为 chart 默认值）。修复：更新时保留现有 finalizer，由 `TestInstallKeepsFluxFinalizer` 覆盖。修复后同一流程（安装 → 更新 → 卸载）在 k3d 上 20 秒内 prune 全部对象，重装后恢复 Ready。
+  - 观察：卸载后 `nfd` namespace 仍保留，未调查原因。
+  - 未验证：原生 webview 窗口（本轮只测了 headless 服务与浏览器页面）；Windows / Linux 的窗口与构建。M1 关闭前需补齐原生窗口冒烟测试。
   - k3d 上已通过：Flux 安装、重复安装拒绝、添加 catalog 源（cosign 校验通过）、安装 nfd（状态识别为已安装）、重复安装拒绝、卸载（Kustomization、参数、HelmRelease、Helm release 与工作负载全部移除）。参数更新只写入 ConfigMap，因 catalog 内联 values 覆盖而不生效；修复已发布为 catalog v2026.10.4（k3d 上 nfd 2→1→3 生效）。
   - bz1-dev1 上：仅新增了 Flux 与 catalog 源（由本项目创建）。nfd、gpu-operator 等为非 Kubeyard 安装，只读检查完成，未修改。
   - bz1-dev1 上 forgeai 的手动卸载已执行：Project `forge-demo/demo`、forge-demo 的 5 个 Sandbox、forgeai CRD 与 RBAC 已删除。`forge-demo` 命名空间与 3 个 PVC（130Gi）因 Project 的 `deletionPolicy: Retain` 保留。

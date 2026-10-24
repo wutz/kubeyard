@@ -90,7 +90,10 @@ spec:
 # 2) 参数（GUI 表单的结果）
 apiVersion: v1
 kind: ConfigMap
-metadata: { name: addon-gpu-operator-params, namespace: kubeyard-system }
+metadata:
+  name: addon-gpu-operator-params
+  namespace: kubeyard-system
+  labels: { kubeyard.wutz.dev/addon: gpu-operator, reconcile.fluxcd.io/watch: Enabled }
 data:
   values.yaml: |
     driver: { enabled: false }
@@ -113,7 +116,7 @@ spec:
     substitute: { addon_namespace: gpu-operator }
 ```
 
-addon 自己的 HelmRelease（`helm.toolkit.fluxcd.io/v2`）用 `valuesFrom` 引用上面的 ConfigMap。卸载 = 删除 Kustomization（`prune: true` 负责清理）再删除参数 ConfigMap；升级 = 改 OCIRepository 的 tag，或修改 addon 参数。
+addon 自己的 HelmRelease（`helm.toolkit.fluxcd.io/v2`）用 `valuesFrom` 引用上面的 ConfigMap。参数 ConfigMap 带 `reconcile.fluxcd.io/watch: Enabled`，Flux 据此在参数变更后立即协调 HelmRelease，不必等待 Kustomization 的 10 分钟间隔。卸载 = 删除 Kustomization（`prune: true` 负责清理）再删除参数 ConfigMap；升级 = 改 OCIRepository 的 tag，或修改 addon 参数。
 
 安装与卸载的守卫（`catalog.Addon.Installable` / `Catalog.Uninstallable`），在写入前用集群的最新状态重新检查：
 

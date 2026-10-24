@@ -3,8 +3,8 @@ module github.com/wutz/kubeyard
 go 1.27.1
 
 require (
-	github.com/egoist/mygo v0.6.3
 	github.com/google/go-containerregistry v0.22.1
+	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	helm.sh/helm/v3 v3.19.4
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
@@ -33,7 +33,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/docker/cli v29.7.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.3 // indirect
-	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/evanphx/json-patch v5.9.11+incompatible // indirect
 	github.com/exponent-io/jsonpath v0.0.0-20210407135951-1de76d718b3f // indirect
@@ -45,7 +44,6 @@ require (
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
-	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/btree v1.1.3 // indirect
@@ -99,7 +97,6 @@ require (
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
