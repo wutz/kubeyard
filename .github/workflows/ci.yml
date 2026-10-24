@@ -98,3 +98,43 @@ jobs:
             gui.log
             gui.err
           if-no-files-found: ignore
+
+  # The window against a live cluster: the overview must show the kind node, not
+  # just the empty state. The screenshot is uploaded for inspection.
+  gui-live-cluster:
+    name: GUI with a live cluster (ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install WebKitGTK
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev xvfb imagemagick
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          wait: 120s
+
+      - name: Launch the window and check the overview
+        run: |
+          go build -o kubeyard-gui ./gui
+          KUBEYARD_CHECK_OVERVIEW=1 xvfb-run -a .github/scripts/gui-smoke.sh ./kubeyard-gui "import -window root gui-kind.png"
+
+      - name: Upload GUI screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-window-kind
+          path: |
+            gui-*.png
+            gui.log
+            overview.json
+          if-no-files-found: ignore
