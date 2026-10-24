@@ -22,6 +22,14 @@ grep -q 'kubeyard-token' page.html
 sleep 8
 kill -0 "$pid" || { cat gui.log; exit 1; }
 
+# With KUBEYARD_CHECK_OVERVIEW=1 the script also checks that the API reads the
+# cluster in the kubeconfig: at least one node, and at least one of them ready.
+if [ "${KUBEYARD_CHECK_OVERVIEW:-}" = 1 ]; then
+  token=$(sed -n 's/.*name="kubeyard-token" content="\([^"]*\)".*/\1/p' page.html)
+  curl -sf -H "X-Kubeyard-Token: $token" http://127.0.0.1:7791/api/overview -o overview.json
+  jq -e '.nodesTotal >= 1 and .nodesReady >= 1' overview.json
+fi
+
 if [ -n "$capture" ]; then
   $capture
 fi
