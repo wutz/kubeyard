@@ -201,6 +201,28 @@ func loadPools(ctx context.Context, contextName string) (poolsView, error) {
 	return toPoolsView(true, pools.Items, claims.Items), nil
 }
 
+// loadVirtualClusters reads the VirtualClusters of a context, with the pool
+// display names their claims refer to. A cluster without the Kubeyard CRDs is
+// not an error: the view reports that the operator is not installed.
+func loadVirtualClusters(ctx context.Context, contextName string) (virtualClustersView, error) {
+	_, _, dc, err := clients(contextName)
+	if err != nil {
+		return virtualClustersView{}, err
+	}
+	var vcs v1alpha1.VirtualClusterList
+	if err := listKubeyard(ctx, dc, virtualClusterResource, &vcs); err != nil {
+		if missingCRD(err) {
+			return toVirtualClustersView(false, nil, nil), nil
+		}
+		return virtualClustersView{}, fmt.Errorf("读取 VirtualCluster 失败：%w", err)
+	}
+	var pools v1alpha1.NodePoolList
+	if err := listKubeyard(ctx, dc, nodePoolResource, &pools); err != nil && !missingCRD(err) {
+		return virtualClustersView{}, fmt.Errorf("读取 NodePool 失败：%w", err)
+	}
+	return toVirtualClustersView(true, vcs.Items, pools.Items), nil
+}
+
 // listKubeyard lists a cluster-scoped resource and decodes the result into list,
 // a pointer to one of the pkg/api list types.
 func listKubeyard(ctx context.Context, dc dynamic.Interface, gvr schema.GroupVersionResource, list any) error {

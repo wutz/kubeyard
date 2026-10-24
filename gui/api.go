@@ -62,6 +62,17 @@ func (s *server) pools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pv)
 }
 
+func (s *server) virtualClusters(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), loadTimeout)
+	defer cancel()
+	vc, err := loadVirtualClusters(ctx, r.URL.Query().Get("context"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, vc)
+}
+
 func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), loadTimeout)
 	defer cancel()

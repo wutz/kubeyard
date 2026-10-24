@@ -140,6 +140,150 @@ func toPoolsView(installed bool, pools []v1alpha1.NodePool, vcs []v1alpha1.Virtu
 	return out
 }
 
+// virtualClustersView is the virtual cluster page. Installed is false when the
+// cluster does not serve VirtualClusters, so the page explains the missing
+// operator instead. Clusters are ordered by priority, largest first.
+type virtualClustersView struct {
+	Installed bool                 `json:"installed"`
+	Clusters  []virtualClusterView `json:"clusters"`
+}
+
+// virtualClusterView is one VirtualCluster: what it asks for, what the operator
+// gave it, and the state of its control plane.
+type virtualClusterView struct {
+	Name        string           `json:"name"`
+	DisplayName string           `json:"displayName"`
+	Description string           `json:"description"`
+	Phase       string           `json:"phase"`
+	Priority    int32            `json:"priority"`
+	Preemptible bool             `json:"preemptible"`
+	Provider    string           `json:"provider"`
+	Mode        string           `json:"mode"`
+	Version     string           `json:"version"`
+	Endpoint    string           `json:"endpoint"`
+	Exposure    exposureView     `json:"exposure"`
+	Claims      []vcClaimView    `json:"claims"`
+	Allocations []allocationView `json:"allocations"`
+	// AdminKubeconfig is true when the cluster recorded the Secret that holds
+	// the admin kubeconfig, so the page can offer to export it.
+	AdminKubeconfig bool              `json:"adminKubeconfig"`
+	Conditions      []vcConditionView `json:"conditions"`
+}
+
+// exposureView is the external address of a control plane.
+type exposureView struct {
+	Type           string `json:"type"`
+	LoadBalancerIP string `json:"loadBalancerIP"`
+	Host           string `json:"host"`
+	Port           int32  `json:"port"`
+}
+
+// vcClaimView is one claim of a VirtualCluster on a pool, with the pool's
+// display name so the page does not have to join the two lists itself.
+type vcClaimView struct {
+	Pool            string   `json:"pool"`
+	PoolDisplayName string   `json:"poolDisplayName"`
+	Min             int32    `json:"min"`
+	Max             int32    `json:"max"`
+	Desired         int32    `json:"desired"`
+	Autoscale       bool     `json:"autoscale"`
+	PinnedNodes     []string `json:"pinnedNodes"`
+}
+
+// allocationView is the nodes a VirtualCluster holds in one pool, as the
+// operator last reported them.
+type allocationView struct {
+	Pool          string   `json:"pool"`
+	Nodes         []string `json:"nodes"`
+	PendingDemand int32    `json:"pendingDemand"`
+}
+
+// vcConditionView is one condition of a VirtualCluster.
+type vcConditionView struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+// toVirtualClustersView builds the virtual cluster page. The pool display names
+// come from the NodePools; a claim on a pool that is gone keeps its own name.
+func toVirtualClustersView(installed bool, vcs []v1alpha1.VirtualCluster, pools []v1alpha1.NodePool) virtualClustersView {
+	out := virtualClustersView{Installed: installed, Clusters: []virtualClusterView{}}
+	if !installed {
+		return out
+	}
+	names := make(map[string]string, len(pools))
+	for _, p := range pools {
+		names[p.Name] = p.Spec.DisplayName
+	}
+	for _, vc := range vcs {
+		out.Clusters = append(out.Clusters, toVirtualClusterView(vc, names))
+	}
+	sort.Slice(out.Clusters, func(i, j int) bool {
+		a, b := out.Clusters[i], out.Clusters[j]
+		if a.Priority != b.Priority {
+			return a.Priority > b.Priority
+		}
+		return a.Name < b.Name
+	})
+	return out
+}
+
+func toVirtualClusterView(vc v1alpha1.VirtualCluster, poolNames map[string]string) virtualClusterView {
+	out := virtualClusterView{
+		Name:        vc.Name,
+		DisplayName: vc.Spec.DisplayName,
+		Description: vc.Spec.Description,
+		Phase:       string(vc.Status.Phase),
+		Priority:    vc.Spec.Priority,
+		Preemptible: vc.Spec.Preemptible,
+		Provider:    vc.Spec.Provider,
+		Mode:        vc.Spec.Mode,
+		Version:     vc.Spec.Version,
+		Endpoint:    vc.Status.Endpoint,
+		Exposure: exposureView{
+			Type:           string(vc.Spec.Exposure.Type),
+			LoadBalancerIP: vc.Spec.Exposure.LoadBalancerIP,
+		},
+		Claims:          []vcClaimView{},
+		Allocations:     []allocationView{},
+		AdminKubeconfig: vc.Status.AdminKubeconfigSecretRef != nil,
+		Conditions:      []vcConditionView{},
+	}
+	if ing := vc.Spec.Exposure.Ingress; ing != nil {
+		out.Exposure.Host, out.Exposure.Port = ing.Host, ing.Port
+	}
+	for _, c := range vc.Spec.PoolClaims {
+		autoscale := c.Autoscale != nil && c.Autoscale.Enabled
+		out.Claims = append(out.Claims, vcClaimView{
+			Pool:            c.Pool,
+			PoolDisplayName: poolNames[c.Pool],
+			Min:             c.Min,
+			Max:             c.Max,
+			Desired:         c.Desired,
+			Autoscale:       autoscale,
+			PinnedNodes:     append([]string{}, c.PinnedNodes...),
+		})
+	}
+	for _, a := range vc.Status.Allocations {
+		out.Allocations = append(out.Allocations, allocationView{
+			Pool:          a.Pool,
+			Nodes:         append([]string{}, a.Nodes...),
+			PendingDemand: a.PendingDemand,
+		})
+	}
+	for _, c := range vc.Status.Conditions {
+		out.Conditions = append(out.Conditions, vcConditionView{
+			Type:    c.Type,
+			Status:  string(c.Status),
+			Reason:  c.Reason,
+			Message: c.Message,
+		})
+	}
+	return out
+}
+
 // catalogView is the component catalog of a context and what the cluster runs
 // of it. Addons is nil when no catalog can be shown; Error or Note says why.
 type catalogView struct {

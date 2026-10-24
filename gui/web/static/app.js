@@ -25,6 +25,16 @@ const state = {
   poolsError: '',
   poolsLoading: false,
   poolsAt: null,
+  // clusters is the virtual cluster page.
+  clusters: null,
+  clustersError: '',
+  clustersLoading: false,
+  clustersAt: null,
+  // selectedCluster names the virtual cluster whose detail is open.
+  selectedCluster: '',
+  // exported holds a kubeconfig returned by the API. The page shows it until
+  // it is dismissed, and never stores it.
+  exported: null,
   selectedAddon: '',
   // form holds the install form of one addon: its path-keyed fields.
   form: null,
@@ -44,6 +54,7 @@ const state = {
 let overviewSeq = 0;
 let catalogSeq = 0;
 let poolsSeq = 0;
+let clustersSeq = 0;
 
 const STATUS_LABEL = {
   installed: ['已安装', 'ok'],
@@ -154,6 +165,30 @@ async function refreshPools() {
   }
 }
 
+async function refreshClusters() {
+  const name = state.selected;
+  if (!name) return;
+  const seq = ++clustersSeq;
+  state.clustersLoading = true;
+  renderContent();
+  try {
+    const view = await api('GET', `/api/virtualclusters?context=${enc(name)}`);
+    if (seq !== clustersSeq) return;
+    state.clusters = view;
+    state.clustersError = '';
+    state.clustersAt = new Date();
+  } catch (err) {
+    if (seq !== clustersSeq) return;
+    state.clusters = null;
+    state.clustersError = err.message;
+  } finally {
+    if (seq === clustersSeq) {
+      state.clustersLoading = false;
+      renderContent();
+    }
+  }
+}
+
 // write sends a cluster write for the selected context. A successful write
 // clears the install form, so the form starts again from what the cluster now
 // runs. A failed one keeps what the user typed.
@@ -194,6 +229,15 @@ function selectContext(name) {
   state.poolsError = '';
   state.poolsLoading = false;
   state.poolsAt = null;
+  // The same for the virtual cluster page; an exported kubeconfig belongs to
+  // the context it came from, so it goes with it.
+  clustersSeq++;
+  state.clusters = null;
+  state.clustersError = '';
+  state.clustersLoading = false;
+  state.clustersAt = null;
+  state.selectedCluster = '';
+  state.exported = null;
   state.selectedAddon = '';
   state.form = null;
   state.confirm = '';
@@ -203,14 +247,29 @@ function selectContext(name) {
   refreshOverview();
   if (state.page === 'catalog') refreshCatalog();
   if (state.page === 'pools') refreshPools();
+  if (state.page === 'clusters') refreshClusters();
 }
 
 function setPage(page) {
   state.page = page;
   state.confirm = '';
+  state.notice = '';
+  state.actionError = '';
   render();
   if (page === 'catalog' && !state.catalog && !state.catalogLoading) refreshCatalog();
   if (page === 'pools') refreshPools();
+  if (page === 'clusters') refreshClusters();
+}
+
+// selectCluster opens the detail of one virtual cluster, or closes it when the
+// same one is clicked again.
+function selectCluster(name) {
+  state.selectedCluster = state.selectedCluster === name ? '' : name;
+  state.confirm = '';
+  state.notice = '';
+  state.actionError = '';
+  state.exported = null;
+  renderContent();
 }
 
 function selectAddon(name) {
@@ -225,6 +284,7 @@ function selectAddon(name) {
 function refreshCurrent() {
   if (state.page === 'overview') refreshOverview();
   else if (state.page === 'pools') refreshPools();
+  else if (state.page === 'clusters') refreshClusters();
   else refreshCatalog();
 }
 
@@ -371,6 +431,7 @@ function sidebar() {
     el('div', { class: 'nav-group' }, '工作区'),
     navItem('overview', '概览'),
     el('div', { class: 'nav-group' }, '资源'),
+    navItem('clusters', '虚拟集群'),
     navItem('pools', '资源池'),
     el('div', { class: 'nav-group' }, '管理'),
     navItem('catalog', '组件'),
@@ -422,6 +483,7 @@ function topbar() {
 function pageContent() {
   if (!state.selected) return emptyState();
   if (state.page === 'overview') return overviewPage();
+  if (state.page === 'clusters') return clustersPage();
   if (state.page === 'pools') return poolsPage();
   return catalogPage();
 }
@@ -533,6 +595,275 @@ function nodeTable(nodes) {
       ),
     ),
   );
+}
+
+// --- virtual clusters --------------------------------------------------------
+
+// PHASE_LABEL names the VirtualCluster phases and the badge colour of each.
+const PHASE_LABEL = {
+  Pending: ['等待', ''],
+  Provisioning: ['创建中', ''],
+  Ready: ['就绪', 'ok'],
+  Degraded: ['降级', 'warn'],
+  Draining: ['回收中', 'warn'],
+  Deleting: ['删除中', 'bad'],
+};
+
+function phaseBadge(phase) {
+  if (!phase) return badge('未报告状态', '');
+  const [label, kind] = PHASE_LABEL[phase] || [phase, ''];
+  return badge(label, kind);
+}
+
+// clustersPage is read-only except for the export of an admin kubeconfig: the
+// operator owns the claims, so the page does not edit them.
+function clustersPage() {
+  const view = state.clusters;
+  const count = view && view.installed ? `VirtualCluster · ${list(view.clusters).length}` : `集群 ${state.selected}`;
+  const head = pageHead(
+    '虚拟集群',
+    count,
+    state.clustersAt ? el('span', { class: 'live' }, `更新于 ${fmtTime(state.clustersAt)}`) : null,
+  );
+  if (state.clustersError) return el('div', { class: 'stack' }, head, alert(state.clustersError, 'error'));
+  if (!view) return el('div', { class: 'stack' }, head, el('p', { class: 'muted' }, '加载中…'));
+  if (!view.installed) {
+    return el(
+      'div',
+      { class: 'stack' },
+      head,
+      el(
+        'div',
+        { class: 'empty' },
+        el('strong', {}, '未安装 Kubeyard operator'),
+        el('span', { class: 'muted small' }, '集群中没有 VirtualCluster 资源（kubeyard.wutz.dev/v1alpha1），安装 kubeyard-operator 后虚拟集群会出现'),
+      ),
+    );
+  }
+  const clusters = list(view.clusters);
+  if (!clusters.length) {
+    return el(
+      'div',
+      { class: 'stack' },
+      head,
+      el(
+        'div',
+        { class: 'empty' },
+        el('strong', {}, '没有虚拟集群'),
+        el('span', { class: 'muted small' }, '创建 VirtualCluster 后会出现'),
+      ),
+    );
+  }
+  const open = clusters.find((c) => c.name === state.selectedCluster);
+  return el(
+    'div',
+    { class: 'stack' },
+    head,
+    el('div', { class: 'pool-grid' }, clusters.map(clusterCard)),
+    open ? clusterDetail(open) : null,
+  );
+}
+
+function clusterCard(c) {
+  const claims = list(c.claims);
+  const nodes = list(c.allocations).reduce((n, a) => n + list(a.nodes).length, 0);
+  return el(
+    'section',
+    {
+      class: `card pool selectable ${state.selectedCluster === c.name ? 'selected' : ''}`,
+      onclick: () => selectCluster(c.name),
+      role: 'button',
+      tabindex: 0,
+      onkeydown: (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectCluster(c.name);
+        }
+      },
+    },
+    el(
+      'div',
+      {},
+      el('h2', {}, c.displayName || c.name),
+      el('div', { class: 'mono small muted' }, c.name),
+    ),
+    el('div', {}, el('div', { class: 'card-label' }, '持有节点'), el('div', { class: 'card-value' }, String(nodes))),
+    el(
+      'div',
+      { class: 'card-sub' },
+      phaseBadge(c.phase),
+      ` 优先级 ${c.priority} · ${c.preemptible ? '可被抢占' : '不可抢占'}`,
+    ),
+    el(
+      'div',
+      { class: 'claims' },
+      el('h3', { class: 'section-title' }, '声明'),
+      claims.length
+        ? claims.map((cl) =>
+            el(
+              'div',
+              { class: 'claim' },
+              el('span', { class: 'claim-name' }, el('span', { class: 'mono' }, cl.poolDisplayName || cl.pool)),
+              el(
+                'span',
+                { class: 'mono small muted' },
+                cl.autoscale ? `min ${cl.min} · max ${cl.max} · 自动伸缩` : `min ${cl.min} · max ${cl.max} · desired ${cl.desired}`,
+              ),
+            ),
+          )
+        : el('span', { class: 'muted small' }, '没有资源池声明'),
+    ),
+  );
+}
+
+function clusterDetail(c) {
+  const exposure = c.exposure || {};
+  const address =
+    exposure.type === 'Ingress'
+      ? `${exposure.host || '—'}:${exposure.port || '—'}`
+      : exposure.loadBalancerIP || c.endpoint || '—';
+  const facts = [
+    ['Provider', `${c.provider || '—'}${c.mode ? ' · ' + c.mode : ''}`],
+    ['版本', c.version || '—'],
+    ['对外地址', `${exposure.type || '—'} · ${address}`],
+  ];
+  const conditions = list(c.conditions);
+  return el(
+    'section',
+    { class: 'card stack' },
+    el(
+      'div',
+      { class: 'page-head' },
+      el('div', {}, el('h2', {}, c.displayName || c.name), el('div', { class: 'mono small muted' }, c.name)),
+      el('button', { class: 'btn', onclick: () => selectCluster(c.name) }, '收起'),
+    ),
+    c.description ? el('p', { class: 'muted' }, c.description) : null,
+    el(
+      'div',
+      { class: 'facts' },
+      facts.map(([k, v]) => el('div', { class: 'fact' }, el('span', { class: 'card-label' }, k), el('span', { class: 'mono small' }, v))),
+    ),
+    allocationTable(list(c.allocations)),
+    conditions.length
+      ? el(
+          'div',
+          { class: 'claims' },
+          el('h3', { class: 'section-title' }, '条件'),
+          conditions.map((cond) =>
+            el(
+              'div',
+              { class: 'claim' },
+              el('span', { class: 'claim-name' }, el('span', { class: 'mono' }, cond.type), ' ', badge(cond.status, cond.status === 'True' ? 'ok' : '')),
+              el('span', { class: 'muted small' }, `${cond.reason || ''} ${cond.message || ''}`.trim()),
+            ),
+          ),
+        )
+      : null,
+    el('h3', { class: 'section-title' }, '管理员 kubeconfig'),
+    c.adminKubeconfig
+      ? el('span', { class: 'muted small' }, '导出的是该虚拟集群内的 cluster-admin 凭证，导出会写入审计 Event，请只交给该集群的管理员。')
+      : el('span', { class: 'muted small' }, '集群尚未生成管理员 kubeconfig（status.adminKubeconfigSecretRef 为空）。'),
+    c.adminKubeconfig
+      ? el(
+          'div',
+          { class: 'actions' },
+          confirmButton(`export:${c.name}`, '导出管理员 kubeconfig', `确认导出 ${c.name} 的管理员 kubeconfig`, {
+            confirmCls: 'btn btn-danger',
+            run: () => exportAdminKubeconfig(c.name),
+          }),
+          cancelButton(),
+        )
+      : null,
+    messages('cluster'),
+    state.exported && state.exported.name === c.name ? exportPanel(state.exported) : null,
+  );
+}
+
+function allocationTable(allocs) {
+  return el(
+    'div',
+    { class: 'table-wrap' },
+    el(
+      'table',
+      {},
+      el('thead', {}, el('tr', {}, el('th', {}, '资源池'), el('th', {}, '节点'), el('th', { class: 'num' }, '待分配需求'))),
+      el(
+        'tbody',
+        {},
+        allocs.length
+          ? allocs.map((a) =>
+              el(
+                'tr',
+                {},
+                el('td', { class: 'mono' }, a.pool),
+                el('td', { class: 'mono small' }, list(a.nodes).join(', ') || '—'),
+                el('td', { class: 'num' }, String(a.pendingDemand || 0)),
+              ),
+            )
+          : el('tr', {}, el('td', { class: 'muted', colspan: 3 }, '还没有分配节点')),
+      ),
+    ),
+  );
+}
+
+// exportAdminKubeconfig asks the API for the credential. The export is audited
+// on the server before it is returned, so a failed write shows the error here.
+async function exportAdminKubeconfig(name) {
+  state.busy = true;
+  state.confirm = '';
+  state.notice = '';
+  state.actionError = '';
+  state.actionScope = 'cluster';
+  state.exported = null;
+  renderContent();
+  try {
+    const res = await api('POST', `/api/virtualclusters/${enc(name)}/admin-kubeconfig`, {
+      context: state.selected,
+      confirm: name,
+    });
+    state.exported = { name, kubeconfig: res.kubeconfig };
+  } catch (err) {
+    state.actionError = err.message;
+  } finally {
+    state.busy = false;
+    renderContent();
+  }
+}
+
+function exportPanel(exp) {
+  return el(
+    'div',
+    { class: 'stack' },
+    alert('已导出。离开此页后不会保留，请立即保存。', 'success'),
+    el(
+      'div',
+      { class: 'actions' },
+      el('button', { class: 'btn', onclick: () => downloadKubeconfig(exp) }, '下载文件'),
+      el(
+        'button',
+        {
+          class: 'btn',
+          onclick: () => {
+            state.exported = null;
+            state.notice = '';
+            renderContent();
+          },
+        },
+        '关闭',
+      ),
+    ),
+    el('pre', { class: 'kubeconfig mono small' }, exp.kubeconfig),
+  );
+}
+
+function downloadKubeconfig(exp) {
+  const blob = new Blob([exp.kubeconfig], { type: 'application/yaml' });
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: `${exp.name}-admin.kubeconfig` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // --- resource pools ----------------------------------------------------------
