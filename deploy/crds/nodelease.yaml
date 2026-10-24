@@ -1,0 +1,67 @@
+# NodeLease: the single source of truth for which VirtualCluster holds a node (docs/operator.md §1).
+# The name is the node name, so a node has at most one active lease. Node labels and taints
+# are a projection of this object and can be rebuilt from it.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: nodeleases.kubeyard.wutz.dev
+spec:
+  group: kubeyard.wutz.dev
+  scope: Cluster
+  names:
+    kind: NodeLease
+    listKind: NodeLeaseList
+    plural: nodeleases
+    singular: nodelease
+    shortNames: [nl]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Node
+          type: string
+          jsonPath: .spec.node
+        - name: Pool
+          type: string
+          jsonPath: .spec.pool
+        - name: VirtualCluster
+          type: string
+          jsonPath: .spec.virtualCluster
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [node, pool, virtualCluster]
+              properties:
+                node:
+                  type: string
+                pool:
+                  type: string
+                virtualCluster:
+                  type: string
+                reason:
+                  type: string
+                  enum: [Pinned, Min, Scale, Preempt]
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Binding, Bound, Draining, Released]
+                boundAt:
+                  type: string
+                  format: date-time
+                drainDeadline:
+                  type: string
+                  format: date-time
