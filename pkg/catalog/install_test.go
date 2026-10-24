@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,17 @@ func testAddon() Addon {
 			{Path: "driver.enabled", Type: "boolean", Target: TargetValues},
 			{Path: "driver.version", Type: "string", Target: TargetValues},
 		},
+	}
+}
+
+func TestUninstallWarningNamesCRDs(t *testing.T) {
+	gateway := Addon{Name: "gateway-api-crds", Health: []Health{{Kind: "CustomResourceDefinition", Name: "gateways.gateway.networking.k8s.io"}}}
+	if got := gateway.UninstallWarning(); !strings.Contains(got, "gateways.gateway.networking.k8s.io") {
+		t.Errorf("warning = %q, want it to name the CRD", got)
+	}
+	nfd := Addon{Name: "nfd", Health: []Health{{Kind: "HelmRelease", Name: "nfd"}}}
+	if got := nfd.UninstallWarning(); got != "" {
+		t.Errorf("addon without CRDs warning = %q, want empty", got)
 	}
 }
 

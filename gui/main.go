@@ -428,6 +428,11 @@ func (a *app) actions(c *ui.Context, cs catalogState, ad catalog.Addon) {
 		if uninstallErr != nil {
 			ui.Text(c, "卸载："+uninstallErr.Error()).FontSize(12).TextColor(t.TextMuted)
 		}
+		if a.confirm == "uninstall" && uninstallErr == nil {
+			if warning := ad.UninstallWarning(); warning != "" {
+				ui.Text(c, warning).FontSize(12).TextColor(t.Danger)
+			}
+		}
 	})
 }
 

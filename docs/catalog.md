@@ -122,7 +122,7 @@ addon 自己的 HelmRelease（`helm.toolkit.fluxcd.io/v2`）用 `valuesFrom` 引
 
 健康检查支持两类对象：`HelmRelease`（按 release 名判断已安装；同名 Deployment / DaemonSet 存在则为已存在）和 `CustomResourceDefinition`（CRD 存在即为已存在，集群级对象，namespace 留空）。只有 Kustomization 这类无法用 Helm release、工作负载或 CRD 查询的对象才会得到"无法判断"，此时拒绝安装。
 
-卸载 gateway-api-crds 会删除集群中全部 Gateway API 资源。守卫只检查目录中声明的依赖（如 istio），GUI 目前不对此额外提醒，卸载前需要自行确认。
+卸载 gateway-api-crds 会删除集群中全部 Gateway API 资源。守卫只检查目录中声明的依赖（如 istio）；对于健康检查中声明了 CRD 的组件，GUI 在点击"卸载"后、确认前显示警告，列出将被删除的 CRD（`catalog.Addon.UninstallWarning`）。
 
 ### 添加 catalog 源
 

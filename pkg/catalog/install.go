@@ -135,6 +135,22 @@ func (a Addon) Installable(status Status, deps map[string]Status) error {
 	return nil
 }
 
+// UninstallWarning says what removing the addon deletes beyond its own
+// workloads: the CRDs its health check names, and every resource of those
+// CRDs. It returns "" when the addon declares no CRD.
+func (a Addon) UninstallWarning() string {
+	var crds []string
+	for _, h := range a.Health {
+		if h.Kind == "CustomResourceDefinition" {
+			crds = append(crds, h.Name)
+		}
+	}
+	if len(crds) == 0 {
+		return ""
+	}
+	return "卸载会删除这些 CRD 以及集群中的全部对应资源：" + strings.Join(crds, "、")
+}
+
 // Uninstallable says why the addon cannot be uninstalled now, or returns nil.
 // Only addons Kubeyard installed are removed, so Helm releases from other
 // installs are left alone. A present addon that depends on this one blocks the
