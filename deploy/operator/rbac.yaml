@@ -1,7 +1,8 @@
 # Permissions for the host-mode operator. Only what the reconciler in
-# pkg/operator/host uses: node labels and taints, the three Kubeyard kinds and
-# their status, and leader election. The operator.md §3 items for namespaces,
-# eviction, and Flux objects come with the slices that need them.
+# pkg/operator/host uses: node labels and taints, pods for the drain step
+# (eviction and forced deletion), the three Kubeyard kinds and their status, and
+# leader election. The operator.md §3 items for namespaces and Flux objects come
+# with the slices that need them.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -21,6 +22,12 @@ rules:
   - apiGroups: [""]
     resources: [nodes]
     verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
   - apiGroups: [kubeyard.wutz.dev]
     resources: [virtualclusters, nodepools, nodeleases]
     verbs: [get, list, watch, create, update, patch]

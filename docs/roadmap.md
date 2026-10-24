@@ -59,12 +59,14 @@
 - [x] NodePool 状态计算（`pkg/pool`）：total / free / reserved / unhealthy；空选择器与非法选择器拒绝，有单元测试
 - [x] 分配算法（`pkg/alloc`）：期望值（§3.1）、准入不变量（§3.2）、分配与抢占顺序（§3.3），纯函数，有单元测试覆盖每条规则（[#14](https://github.com/wutz/kubeyard/pull/14)）
   - 待确认：§3.2 称 min 永远可满足，§3.3 只允许更低优先级抢占。当前实现对 min 缺口也只抢更低优先级的弹性节点，满足不了时体现为 Shortfall。若要求 min 优先于同级，需先修改 §3.3
-- [ ] kubeyard-operator host 模式：VirtualCluster、NodePool、NodeLease（drain 步骤未完成）
+- [ ] kubeyard-operator host 模式：VirtualCluster、NodePool、NodeLease（准入 webhook 未完成）
   - [x] API 类型与 scheme（`pkg/api/v1alpha1`）：三个 kind 与 `operator.md` §1 的示例 JSON 一致，DeepCopy 手写并有独立性测试。
   - [x] CRD manifest（`deploy/crds/`，[#20](https://github.com/wutz/kubeyard/pull/20)）：字段与枚举由测试对齐 Go 类型；§1 的三个示例 CR 在本地 k3d 上 server-side dry-run 通过。
   - [x] 协调循环（`pkg/operator/host`，[#17](https://github.com/wutz/kubeyard/pull/17)）与入口（`cmd/kubeyard-operator --mode=host`）：计算 NodePool.status，按 §3 分配，写 NodeLease、节点 VC 标签 / pool 标签 / NoSchedule taint（§2），回写 VC allocations。`--mode=vcluster` 明确报错，未实现。RBAC 在 `deploy/operator/rbac.yaml`。
   - 2026-10-25 本地 k3d 实测（单节点 NodePool）：min=0 的 VC 获得空闲节点，lease 为 Bound，节点标签与 taint 正确，VC allocations 正确；更高优先级的不可抢占 VC 到达后，节点的 lease 转为该 VC、reason=Preempt、phase=Draining、drainDeadline 为 grace 之后。operator 日志无错误。
-  - 已知缺口：抢占后节点上的 VC 标签与 NoSchedule taint 仍是原 VC（设计上等 drain 完成后再切换，drain 步骤未写）；Draining 不会迁移到 Bound 或 Released；释放与失效的租约只会进入 Draining，不会自动完成。
+  - [x] drain 步骤（`pkg/operator/host/drain.go`，§3.4 步骤 1、3、4、5）：被抢占或被释放的节点先加 `kubeyard.wutz.dev/draining:NoSchedule`；宽限期结束后用 Eviction API 驱逐旧 VC 在 `vc-<name>` 中的 Pod（受 PDB 约束，被拒绝则下一轮重试）；到 drain 截止时间（宽限期 + drainTimeout）强制删除；节点清空后，被抢占的节点移交给申请者（lease Bound，标签与 taint 换成新 VC），被释放的节点解绑并删除 lease。单元测试 4 个，覆盖宽限期、驱逐后移交、PDB 阻塞后强制删除、释放后解绑再分配。
+  - 2026-10-25 本地 k3d 实测（真实 API，operator 二进制以 admin kubeconfig 运行）：抢占，无 PDB，宽限期 30s 后 Pod 被驱逐，节点在 t+31s 移交给 high；PDB `minAvailable: 1` 时驱逐被拒绝，Pod 保留到截止时间（30s + 90s）后被强制删除，节点移交给 top；释放 top 后节点解绑，分配器随即按优先级把节点给了 high（而不是 low）。operator 日志无错误。
+  - 已知缺口：§3.4 步骤 2（向受害 VC 发 Event 与 `Preempting` 条件）未实现，归 M3；释放的租约直接删除，未写 UsageReport（§1），归 M4；`--mode=vcluster` 未实现；draining 节点每 10 秒轮询一次，不监听 Pod 事件。
   - 未验证：bz1-dev1 上的运行（只读，未部署）；多节点与 GPU 节点的真实分配；准入 webhook（§3.2）。
 - vcluster 独占节点模式，手动 desired + pinnedNodes
 - [ ] 导出管理员 kubeconfig（LoadBalancer / Ingress:7443）：后端已完成，GUI 页面与 vcluster 生成 Secret 未完成
