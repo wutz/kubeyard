@@ -8,6 +8,7 @@ Catalog 是 Kubeyard 的"应用商店"：一份由组织维护、可被 GUI 浏�
 - 版本以 tag + digest 固定，`ghcr.io/wutz/kubeyard-catalog:v2026.05.0` 发布后不可变
 - 浮动 tag `stable` 指向当前推荐版本
 - GUI 只接受 OCI 源地址；Flux 的 OCIRepository 原生支持 cosign 校验
+- GUI 读取 catalog 的方式：先读集群里 OCIRepository 的 `status.artifact.revision`（Flux 已校验签名的 digest），再用 `oci://<spec.url>@<digest>` 从 GHCR 拉取。digest 引用是内容寻址的，拉到的内容与 Flux 校验的一致；集群里的 SourceVerified 不为 True 时 GUI 不显示组件
 
 发布流程：
 

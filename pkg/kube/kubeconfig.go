@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -38,9 +39,9 @@ func Contexts() ([]Context, error) {
 	return out, nil
 }
 
-// Connect builds a clientset for the named context. Requests time out after
-// ten seconds so a dead cluster cannot freeze the window.
-func Connect(contextName string) (*kubernetes.Clientset, error) {
+// RESTConfig builds the REST config of the named context. Requests time out
+// after ten seconds so a dead cluster cannot freeze the window.
+func RESTConfig(contextName string) (*rest.Config, error) {
 	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		loadingRules(), &clientcmd.ConfigOverrides{CurrentContext: contextName},
 	).ClientConfig()
@@ -48,6 +49,15 @@ func Connect(contextName string) (*kubernetes.Clientset, error) {
 		return nil, fmt.Errorf("context %q: %w", contextName, err)
 	}
 	cfg.Timeout = 10 * time.Second
+	return cfg, nil
+}
+
+// Connect builds a clientset for the named context.
+func Connect(contextName string) (*kubernetes.Clientset, error) {
+	cfg, err := RESTConfig(contextName)
+	if err != nil {
+		return nil, err
+	}
 	return kubernetes.NewForConfig(cfg)
 }
 
