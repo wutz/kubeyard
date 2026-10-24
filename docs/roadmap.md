@@ -38,7 +38,7 @@
   - forgeai 重装：chart 0.3.0 把 `command` 写死为 `/manager`，而发布镜像的入口是 `/ko-app/cmd`，控制器 CrashLoop。修复在 [wutz/forgeai#58](https://github.com/wutz/forgeai/pull/58)（已合并），发版 [chart 0.3.1](https://github.com/wutz/forgeai/releases/tag/v0.3.1)（[#59](https://github.com/wutz/forgeai/pull/59)）。bz1-dev1 已于 0.3.1 重新安装 forgeai（`helm install` 从 OCI，控制器 1/1 Running，镜像 `ghcr.io/wutz/forgeai:0.3.1`）。0.3.1 新增 CRD `inferenceservices.forgeai.wutz.dev`，catalog 的卸载警告目前只列出 `projects` CRD，需补全。
   - 发现：chart 的 CRD 带 `helm.sh/resource-policy: keep`，`helm uninstall` 后 CRD 保留，需手动清理。卸载 forgeai 时 Kubeyard 的警告应说明这一点。
   - GUI 验证结果未提供。
-  - catalog 的 forgeai 与 agent-sandbox 条目（[wutz/kubeyard-catalog#4](https://github.com/wutz/kubeyard-catalog/pull/4)）未合并、未打 tag，依赖 forgeai 修复发版。
+  - catalog 的 forgeai 与 agent-sandbox 条目已合并（[wutz/kubeyard-catalog#4](https://github.com/wutz/kubeyard-catalog/pull/4)），并以 `v2026.10.5` 发布；stable 指向该版本，cosign 校验通过，forgeai 为 chart 0.3.1。bz1-dev1 的 catalog 源仍为 v2026.10.4，将在下次 1h 协调时更新。
 
 ## M2 虚拟集群与资源池
 
