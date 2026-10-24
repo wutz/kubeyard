@@ -73,6 +73,27 @@ func TestRenderSplitsTargets(t *testing.T) {
 	}
 }
 
+func TestRenderFillsSchemaDefaults(t *testing.T) {
+	ad := Addon{Name: "nfd", Params: []Param{
+		{Path: "master.replicaCount", Type: "integer", Target: TargetValues, Default: 2.0},
+		{Path: "vip", Type: "string", Target: TargetSubstitute, Default: "192.0.2.10"},
+		{Path: "driver.version", Type: "string", Target: TargetValues},
+	}}
+	helm, sub, err := ad.Render(map[string]any{"master.replicaCount": 3.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := helm["master"].(map[string]any)["replicaCount"]; got != 3.0 {
+		t.Errorf("replicaCount = %v, want the submitted 3", got)
+	}
+	if sub["vip"] != "192.0.2.10" {
+		t.Errorf("vip = %q, want the schema default", sub["vip"])
+	}
+	if _, ok := helm["driver"]; ok {
+		t.Errorf("parameter without a default was stored: %v", helm)
+	}
+}
+
 func TestRenderRejectsUnknownPath(t *testing.T) {
 	if _, _, err := testAddon().Render(map[string]any{"nope": 1}); err == nil {
 		t.Fatal("Render accepted a parameter the schema does not declare")

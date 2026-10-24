@@ -9,14 +9,27 @@ import (
 // Render splits form values, keyed by dotted parameter path, into the Helm
 // values document and the postBuild substitutions. A path the schema does not
 // declare is an error, so a stale form cannot write values nothing reads.
+//
+// A parameter the form left out takes its schema default, so the stored values
+// always name every parameter that has one. Otherwise the chart's own default
+// applies, which can differ from the schema.
 func (a Addon) Render(values map[string]any) (helm map[string]any, substitute map[string]string, err error) {
 	known := make(map[string]Param, len(a.Params))
 	for _, p := range a.Params {
 		known[p.Path] = p
 	}
+	filled := make(map[string]any, len(a.Params))
+	for _, p := range a.Params {
+		if p.Default != nil {
+			filled[p.Path] = p.Default
+		}
+	}
+	for path, v := range values {
+		filled[path] = v
+	}
 	helm = map[string]any{}
 	substitute = map[string]string{}
-	for path, v := range values {
+	for path, v := range filled {
 		p, ok := known[path]
 		if !ok {
 			return nil, nil, fmt.Errorf("addon %s: unknown parameter %q", a.Name, path)
