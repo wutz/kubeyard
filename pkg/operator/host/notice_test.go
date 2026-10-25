@@ -53,7 +53,7 @@ func TestPreemptionNoticesVictim(t *testing.T) {
 	if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != preemptingReason {
 		t.Fatalf("low conditions = %+v, want Preempting=True", low.Status.Conditions)
 	}
-	if !strings.Contains(cond.Message, "1 个节点") || !strings.Contains(cond.Message, "n1") {
+	if !strings.Contains(cond.Message, "1 个节点") || !strings.Contains(cond.Message, "：n1") {
 		t.Errorf("condition message = %q, want the count and the node", cond.Message)
 	}
 
