@@ -33,7 +33,8 @@
 - 版本升级不作为 GUI 操作：OCIRepository 跟随 stable tag 由 Flux 自动拉取（范围决定，见 catalog.md）
 - [x] GUI 改为 webview：本地 loopback 服务 + 系统 webview，token / Host / CSP 保护，业务逻辑沿用 `pkg/`
 - [x] GUI 改为 Wails v2.17.0：去掉 loopback HTTP 服务与 token / Host / CSP 守卫，页面经 Wails 绑定调用 `App` 方法（不开端口）；管理员 kubeconfig 导出改为原生保存对话框，凭证由 Go 写入文件、不进入页面；业务逻辑沿用 `pkg/`。上一条 webview 记录保留为历史
-- [ ] 写入路径的端到端验证未完成（M1 未完成关闭的原因）。
+- [x] 写入路径的端到端验证
+  - 2026-10-25，k3d 全新集群，`gui/live_write_test.go`（设置 `KUBEYARD_LIVE_WRITE` 时运行，经 `App` 绑定）：安装 Flux、添加 catalog 源、安装 nfd（replicaCount 2，状态为已安装，卸载警告写出 namespace）、参数更新为 3（Deployment 3/3）、卸载（Kustomization、HelmRelease、工作负载全部移除），卸载后 `nfd` namespace 保留，与卸载警告一致。
   - 2026-10-24，GUI 在 k3d 上验证（headless 服务，经 API 与浏览器页面操作）：`/api/contexts`、`/api/overview`、`/api/catalog` 返回正确；守卫拒绝重复安装 Flux、重复添加 catalog 源、重复安装 nfd、卸载非 Kubeyard 组件、未知组件，错误 token 返回 401，外部 Host 返回 403。卸载 nfd 后经 API 重新安装，Flux 协调到 Ready；参数更新经 API 与组件页两种方式都在 Deployment 上生效（nfd master 2→3→2）。
   - 发现并修复：参数 ConfigMap 未带 Flux 的 `reconcile.fluxcd.io/watch=Enabled` 标签，参数更新要等 Kustomization / HelmRelease 的 10 分钟间隔才生效（手动 reconcile 即时生效）。现在安装与更新都写入该标签，k3d 上更新约 5 秒生效，由 `TestInstallLabelsParamsForFluxWatch` 覆盖。
   - 发现并修复：Kubeyard 更新 Kustomization 时整对象 Update 会丢掉 Flux 的 `finalizers.fluxcd.io`，之后卸载会跳过 prune，HelmRelease 与工作负载残留（2026-10-24 在 k3d 复现：卸载后 HelmRelease 仍被协调，参数 ConfigMap 已删，Helm 回退为 chart 默认值）。修复：更新时保留现有 finalizer，由 `TestInstallKeepsFluxFinalizer` 覆盖。修复后同一流程（安装 → 更新 → 卸载）在 k3d 上 20 秒内 prune 全部对象，重装后恢复 Ready。
@@ -93,6 +94,7 @@
 - 跨 VC 优先级抢占、drain 流程、dry-run 预览
 - VC 管理员侧可见的"即将回收"提示
   - [x] operator 侧（`pkg/operator/host/notice.go`，§3.4 步骤 2）：抢占时在受害 VC 上写 Warning Event（reason `Preempting`，写在 `default`），并由租约状态派生 VC 的 `Preempting` 条件（`NodesReclaimed`，列出节点与回收截止时间），节点移交后自动清除。`TestPreemptionNoticesVictim` 等 3 个测试覆盖。
+  - [x] GUI 侧（宿主管理员视角，[#34](https://github.com/wutz/kubeyard/pull/34)）：虚拟集群详情页在 `Preempting=True` 时显示"即将回收"提示，列出条件消息。浏览器实测只用了 mock 的 `window.go` 绑定（静态页），未在 Wails 窗口内与真实集群联调。
     - 2026-10-25 本地 k3d 实测（operator 二进制在宿主机运行，单节点 NodePool，grace 30s / drainTimeout 60s）：low 持有节点并运行 Pod，high（优先级 5）到达后 low 出现 Event 与条件，条件内容为 `1 个节点将于 … 前回收：[k3d-kubeyard-gui-agent-0]`；grace 到期后 Pod 被驱逐，约 10 秒内节点移交给 high，条件消失，Event 仅 1 条，operator 日志 0 条错误。测试后已删除验证对象并清除节点标签与 taint。
   - [ ] GUI 侧：虚拟集群详情页显示"即将回收"（待做）
 
