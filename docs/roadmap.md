@@ -20,7 +20,7 @@
 - 组件页：浏览、按 schema 填参数、安装 / 升级 / 卸载、查看 Flux 状态与事件
 - 技术验证：webview 概览页与节点表格（GUI 实现改为 webview，见 [GUI 设计](gui.md) §5）
 
-状态（M1 以未完成状态关闭）：
+状态（2026-10-25 关闭：写入路径已在 k3d 验证，下列两项需用户决定或确认，不阻塞 M1 关闭）：
 
 - [x] 概览、节点表格、kubeconfig context 切换
 - [x] catalog 仓库：8 个 host 组件，cosign 签名发布到 GHCR，参数归属由 `x-kubeyard-target` 标记
@@ -94,7 +94,8 @@
 - 跨 VC 优先级抢占、drain 流程、dry-run 预览
 - VC 管理员侧可见的"即将回收"提示
   - [x] operator 侧（`pkg/operator/host/notice.go`，§3.4 步骤 2）：抢占时在受害 VC 上写 Warning Event（reason `Preempting`，写在 `default`），并由租约状态派生 VC 的 `Preempting` 条件（`NodesReclaimed`，列出节点与回收截止时间），节点移交后自动清除。`TestPreemptionNoticesVictim` 等 3 个测试覆盖。
-  - [x] GUI 侧（宿主管理员视角，[#34](https://github.com/wutz/kubeyard/pull/34)）：虚拟集群详情页在 `Preempting=True` 时显示"即将回收"提示，列出条件消息。浏览器实测只用了 mock 的 `window.go` 绑定（静态页），未在 Wails 窗口内与真实集群联调。
+  - [x] GUI 侧（宿主管理员视角，[#34](https://github.com/wutz/kubeyard/pull/34)）：虚拟集群详情页在 `Preempting=True` 时显示"即将回收"提示，列出条件消息。
+  - 2026-10-25 k3d 实测（真实 operator 在宿主机运行，`gui/live_reclaim_test.go`，设置 `KUBEYARD_LIVE_RECLAIM` 时运行）：`low` 持有节点时，`high` 到达，operator 写入 `Preempting=True`（NodesReclaimed，列出节点与截止时间）与 `default` 下的 Warning Event；`App.VirtualClusters` 读到该条件；移交后条件清除。把抓取到的真实返回值交给详情页渲染，横幅显示正确（静态页 + Wails 绑定替身）。未验证：在 Wails 原生窗口内点击操作，本机未自动化该窗口。
     - 2026-10-25 本地 k3d 实测（operator 二进制在宿主机运行，单节点 NodePool，grace 30s / drainTimeout 60s）：low 持有节点并运行 Pod，high（优先级 5）到达后 low 出现 Event 与条件，条件内容为 `1 个节点将于 … 前回收：[k3d-kubeyard-gui-agent-0]`；grace 到期后 Pod 被驱逐，约 10 秒内节点移交给 high，条件消失，Event 仅 1 条，operator 日志 0 条错误。测试后已删除验证对象并清除节点标签与 taint。
   - [ ] GUI 侧：虚拟集群详情页显示"即将回收"（待做）
 
