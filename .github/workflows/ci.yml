@@ -164,15 +164,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev xvfb imagemagick
 
+      # Pin the cluster name: helm/kind-action defaults to chart-testing, and kind
+      # names its kubeconfig context kind-<cluster name>, here kind-kubeyard.
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
+          cluster_name: kubeyard
           wait: 120s
 
-      # kind names its kubeconfig context kind-<cluster name>, here kind-kind.
       - name: Check the overview and launch the window
         run: |
-          KUBEYARD_LIVE_CONTEXT=kind-kind go test -run TestLiveOverview -v ./gui
+          KUBEYARD_LIVE_CONTEXT=kind-kubeyard go test -run TestLiveOverview -v ./gui
           go build -tags production -o kubeyard-gui ./gui
           xvfb-run -a .github/scripts/gui-smoke.sh ./kubeyard-gui "import -window root gui-kind.png"
 
