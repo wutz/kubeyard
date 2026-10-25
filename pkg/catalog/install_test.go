@@ -21,12 +21,39 @@ func testAddon() Addon {
 
 func TestUninstallWarningNamesCRDs(t *testing.T) {
 	gateway := Addon{Name: "gateway-api-crds", Health: []Health{{Kind: "CustomResourceDefinition", Name: "gateways.gateway.networking.k8s.io"}}}
-	if got := gateway.UninstallWarning(); !strings.Contains(got, "gateways.gateway.networking.k8s.io") {
-		t.Errorf("warning = %q, want it to name the CRD", got)
+	got := gateway.UninstallWarning()
+	if !strings.Contains(got, "gateways.gateway.networking.k8s.io") || !strings.Contains(got, "会删除") {
+		t.Errorf("Kustomization addon warning = %q, want it to name the CRD and say it is deleted", got)
 	}
-	nfd := Addon{Name: "nfd", Health: []Health{{Kind: "HelmRelease", Name: "nfd"}}}
-	if got := nfd.UninstallWarning(); got != "" {
-		t.Errorf("addon without CRDs warning = %q, want empty", got)
+	empty := Addon{Name: "x"}
+	if got := empty.UninstallWarning(); got != "" {
+		t.Errorf("addon without health warning = %q, want empty", got)
+	}
+}
+
+func TestUninstallWarningKeepsHelmLeftovers(t *testing.T) {
+	nfd := Addon{Name: "nfd", Namespace: "nfd", Health: []Health{{Kind: "HelmRelease", Name: "nfd"}}}
+	got := nfd.UninstallWarning()
+	if !strings.Contains(got, "namespace nfd 由 Helm 创建，卸载后保留") {
+		t.Errorf("Helm addon warning = %q, want the retained namespace", got)
+	}
+	if strings.Contains(got, "CRD") {
+		t.Errorf("Helm addon without CRDs warning = %q, want no CRD sentence", got)
+	}
+
+	forgeai := Addon{Name: "forgeai", Namespace: "forgeai-system", Health: []Health{
+		{Kind: "HelmRelease", Name: "forgeai"},
+		{Kind: "CustomResourceDefinition", Name: "projects.forgeai.wutz.dev"},
+		{Kind: "CustomResourceDefinition", Name: "fileservers.forgeai.wutz.dev"},
+	}}
+	got = forgeai.UninstallWarning()
+	if !strings.Contains(got, "namespace forgeai-system") ||
+		!strings.Contains(got, "keep 策略时卸载后保留") ||
+		!strings.Contains(got, "projects.forgeai.wutz.dev、fileservers.forgeai.wutz.dev") {
+		t.Errorf("forgeai warning = %q, want the namespace and the CRDs under keep", got)
+	}
+	if strings.Contains(got, "会删除") {
+		t.Errorf("forgeai warning = %q, must not say the CRDs are deleted", got)
 	}
 }
 
