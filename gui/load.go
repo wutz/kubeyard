@@ -144,6 +144,10 @@ func sourceCatalog(ctx context.Context, cfg *rest.Config) (*catalog.Catalog, err
 // OCIRepository verified. Nothing from an unverified source is read.
 func verifiedCatalog(ctx context.Context, cfg *rest.Config, src kube.Source) (*catalog.Catalog, error) {
 	switch {
+	case !src.Ready && src.Message == "":
+		// A source Flux has only just created has no message yet. Say that
+		// instead of ending the sentence with nothing after the colon.
+		return nil, errors.New("catalog 源还在就绪中，Flux 拉取完成后刷新即可")
 	case !src.Ready:
 		return nil, errors.New("catalog 源未就绪：" + src.Message)
 	case !src.Verified:
