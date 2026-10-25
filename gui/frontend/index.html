@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="zh-CN" data-titlebar="__KUBEYARD_TITLEBAR__">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="kubeyard-token" content="__KUBEYARD_TOKEN__">
+  <!-- The page loads only its own scripts and styles. Wails serves it from its own origin. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'">
   <title>Kubeyard</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>

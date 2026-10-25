@@ -215,7 +215,7 @@ button, select, input { font: inherit; color: inherit; }
 
 .status { color: var(--mute); font-size: 12px; white-space: nowrap; }
 
-/* The native title bar is hidden on macOS (see gui/titlebar_darwin.go), so
+/* The native title bar is hidden on macOS (see gui/main.go), so
    the traffic lights sit over the top left corner. The page leaves them room:
    the sidebar's top row, or the top bar when the sidebar is collapsed. */
 html[data-titlebar="hidden"] { --lights: 76px; }

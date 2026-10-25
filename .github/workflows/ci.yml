@@ -11,9 +11,9 @@ permissions:
 jobs:
   test:
     name: test (${{ matrix.os }})
-    # The GUI links a system webview through cgo, so every platform builds it.
-    # Linux needs webkit2gtk-4.0, which webview_go requires and which ubuntu-22.04
-    # still packages.
+    # The GUI is a Wails app, which links the system webview through cgo, so every
+    # platform builds it. Linux needs webkit2gtk-4.0, which Wails v2 uses by default
+    # and which ubuntu-22.04 still packages.
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -52,37 +52,47 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # Starts the native window against a fake API server (cmd/fakeapiserver,
-      # not a cluster), checks that the overview shows its node as Ready, and
-      # saves a screenshot of the desktop while the window is open. The screenshot
-      # and the overview are uploaded so the window contents can be inspected.
+      # The overview the window shows, read through App.Overview from a fake API
+      # server (cmd/fakeapiserver, not a cluster). The server must show its node
+      # as Ready. The Windows step below runs the same test inline.
+      - name: Overview against the fake cluster (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          KUBEYARD_LIVE_CONTEXT: fake
+        run: |
+          go build -o fake-apiserver ./cmd/fakeapiserver
+          .github/scripts/with-fake-cluster.sh ./fake-apiserver go test -run TestLiveOverview -v ./gui
+
+      # Starts the native window against the fake API server and saves a
+      # screenshot of the desktop while the window is open. The binary needs the
+      # production tag: without it, Wails exits at start-up.
       - name: GUI window launches (Linux)
         if: runner.os == 'Linux'
-        env:
-          KUBEYARD_CHECK_OVERVIEW: "1"
         run: |
-          go build -o kubeyard-gui ./gui
+          go build -tags production -o kubeyard-gui ./gui
           go build -o fake-apiserver ./cmd/fakeapiserver
           xvfb-run -a .github/scripts/with-fake-cluster.sh ./fake-apiserver .github/scripts/gui-smoke.sh ./kubeyard-gui "import -window root gui-linux.png"
 
+      # Plain go build leaves UniformTypeIdentifiers unlinked; wails build adds it.
       - name: GUI window launches (macOS)
         if: runner.os == 'macOS'
         shell: bash
         env:
-          KUBEYARD_CHECK_OVERVIEW: "1"
+          CGO_LDFLAGS: "-framework UniformTypeIdentifiers"
         run: |
-          go build -o kubeyard-gui ./gui
+          go build -tags production -o kubeyard-gui ./gui
           go build -o fake-apiserver ./cmd/fakeapiserver
           .github/scripts/with-fake-cluster.sh ./fake-apiserver .github/scripts/gui-smoke.sh ./kubeyard-gui "screencapture -x gui-macos.png"
 
-      # The Windows runners have no jq, so this step makes the overview check in
-      # PowerShell with the same rule as gui-smoke.sh: at least one node, and at
-      # least one of them ready.
+      # The Windows runners have no jq and no bash helper, so this step does the
+      # same in PowerShell: start the fake server, point KUBECONFIG at it, run the
+      # overview test, then start the window and capture the desktop.
       - name: GUI window launches (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          go build -o kubeyard-gui.exe ./gui
+          go build -tags production -o kubeyard-gui.exe ./gui
           go build -o fake-apiserver.exe ./cmd/fakeapiserver
           $fake = Start-Process -FilePath ./fake-apiserver.exe -ArgumentList '-addr', '127.0.0.1:7792' -PassThru -RedirectStandardError fake-apiserver.log
           $ready = $false
@@ -109,19 +119,12 @@ jobs:
           current-context: fake
           '@
           $env:KUBECONFIG = $kubeconfig
-          $p = Start-Process -FilePath ./kubeyard-gui.exe -ArgumentList '-addr', '127.0.0.1:7791' -PassThru -RedirectStandardError gui.err
-          $page = $null
-          for ($i = 0; $i -lt 30 -and -not $page; $i++) {
-            try { $page = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7791/).Content } catch { Start-Sleep -Seconds 1 }
-          }
-          if ($page -notmatch 'kubeyard-token') { exit 1 }
+          $env:KUBEYARD_LIVE_CONTEXT = 'fake'
+          go test -run TestLiveOverview -v ./gui
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $p = Start-Process -FilePath ./kubeyard-gui.exe -PassThru -RedirectStandardError gui.err
           Start-Sleep -Seconds 8
           if ($p.HasExited) { Get-Content gui.err; exit 1 }
-          $token = [regex]::Match($page, 'name="kubeyard-token" content="([^"]*)"').Groups[1].Value
-          $raw = (Invoke-WebRequest -UseBasicParsing -Headers @{ 'X-Kubeyard-Token' = $token } http://127.0.0.1:7791/api/overview).Content
-          Set-Content -Path overview.json -Value $raw -Encoding utf8
-          $ov = $raw | ConvertFrom-Json
-          if (-not ($ov.nodesTotal -ge 1 -and $ov.nodesReady -ge 1)) { Write-Host "overview: $raw"; exit 1 }
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
@@ -139,7 +142,6 @@ jobs:
             gui-*.png
             gui.log
             gui.err
-            overview.json
             fake-apiserver.log
           if-no-files-found: ignore
 
@@ -167,10 +169,12 @@ jobs:
         with:
           wait: 120s
 
-      - name: Launch the window and check the overview
+      # kind names its kubeconfig context kind-<cluster name>, here kind-kind.
+      - name: Check the overview and launch the window
         run: |
-          go build -o kubeyard-gui ./gui
-          KUBEYARD_CHECK_OVERVIEW=1 xvfb-run -a .github/scripts/gui-smoke.sh ./kubeyard-gui "import -window root gui-kind.png"
+          KUBEYARD_LIVE_CONTEXT=kind-kind go test -run TestLiveOverview -v ./gui
+          go build -tags production -o kubeyard-gui ./gui
+          xvfb-run -a .github/scripts/gui-smoke.sh ./kubeyard-gui "import -window root gui-kind.png"
 
       - name: Upload GUI screenshot
         if: always()
@@ -180,5 +184,4 @@ jobs:
           path: |
             gui-*.png
             gui.log
-            overview.json
           if-no-files-found: ignore

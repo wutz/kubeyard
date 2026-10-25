@@ -1,68 +1,45 @@
-// Command gui is the Kubeyard desktop client. It serves the UI on a loopback
-// port and shows it in a native webview window. The API talks to the API server
-// of the selected kubeconfig context directly through pkg/kube and pkg/catalog;
-// there is no backend service.
+// Command gui is the Kubeyard desktop client. It shows the UI in a native window
+// built with Wails. The page calls the methods of App through Wails bindings,
+// and they talk to the API server of the selected kubeconfig context through
+// pkg/kube and pkg/catalog. There is no backend service and no network listener.
 package main
 
 import (
-	"flag"
-	"fmt"
+	"embed"
+	"io/fs"
 	"log"
-	"net"
-	"net/http"
 
-	webview "github.com/webview/webview_go"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
+//go:embed frontend
+var frontend embed.FS
+
 func main() {
-	headless := flag.Bool("headless", false, "serve the UI without a window and print its URL")
-	addr := flag.String("addr", "127.0.0.1:0", "loopback address to serve the UI on")
-	debug := flag.Bool("debug", false, "enable the webview developer tools")
-	flag.Parse()
-
-	if err := checkLoopback(*addr); err != nil {
-		log.Fatal(err)
-	}
-	ln, err := net.Listen("tcp", *addr)
+	assets, err := fs.Sub(frontend, "frontend")
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv, err := newServer(ln.Addr())
+	app := NewApp()
+	err = wails.Run(&options.App{
+		Title:     "Kubeyard",
+		Width:     1120,
+		Height:    720,
+		MinWidth:  960,
+		MinHeight: 600,
+		AssetServer: &assetserver.Options{
+			Assets: assets,
+		},
+		OnStartup: app.startup,
+		Bind:      []any{app},
+		// The page draws the whole window and the traffic lights float over its
+		// top left corner, so the title bar is hidden (see app.css).
+		Mac: &mac.Options{TitleBar: mac.TitleBarHidden()},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	go func() {
-		log.Fatal(http.Serve(ln, srv.handler()))
-	}()
-	url := "http://" + ln.Addr().String() + "/"
-
-	if *headless {
-		fmt.Println(url)
-		select {}
-	}
-
-	w := webview.New(*debug)
-	defer w.Destroy()
-	w.SetTitle("Kubeyard")
-	w.SetSize(1120, 720, webview.HintNone)
-	w.SetSize(960, 600, webview.HintMin)
-	hideTitlebar(w.Window())
-	w.Navigate(url)
-	w.Run()
-}
-
-// checkLoopback refuses listen addresses that other machines could reach. The
-// API trusts only loopback callers, so the UI must never leave the machine.
-func checkLoopback(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("-addr %q: %w", addr, err)
-	}
-	if host == "localhost" {
-		return nil
-	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("-addr %q must bind a loopback address such as 127.0.0.1", addr)
-	}
-	return nil
 }

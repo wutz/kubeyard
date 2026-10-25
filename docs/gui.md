@@ -60,7 +60,7 @@
 
 - **创建虚拟集群**：向导三步 —— 基本信息与优先级 → 选择资源池并设定 min / max / desired（实时显示池内剩余与是否会触发抢占）→ 暴露方式（LoadBalancer IP 或 Ingress 域名，端口 7443）。提交即创建 VirtualCluster，页面跟踪 Provisioning 进度
 - **调整节点**：资源池页面拖拽节点或改数字；涉及抢占时先展示 dry-run 结果（哪些 VC、哪些节点、宽限期），二次确认
-- **导出管理员 kubeconfig**：显示 server 地址，支持复制、保存文件、直接在 GUI 中"以该 VC 管理员身份打开"（便于平台管理员排障）。已实现导出（页面二次确认，凭证不缓存，导出前写审计 Event）；"以该 VC 管理员身份打开"与凭证轮换按钮未实现，见 [roadmap](roadmap.md) M2
+- **导出管理员 kubeconfig**：显示 server 地址，并可直接在 GUI 中"以该 VC 管理员身份打开"（便于平台管理员排障）。已实现导出：输入虚拟集群名称二次确认，通过原生保存对话框选择位置，凭证由 Go 直接写入文件（权限 0600），不进入页面、不缓存；写入文件前先写审计 Event，取消对话框则不写审计。"以该 VC 管理员身份打开"与凭证轮换按钮未实现，见 [roadmap](roadmap.md) M2
 - **签发用户 kubeconfig**：选择成员与角色，生成后可下载；列表中显示签发时间。凭证不过期，页面明确提示这一点
 - **撤销用户 kubeconfig**：二次确认，说明"撤销立即生效，且不可恢复，需重新签发"；撤销后该成员状态变为"已撤销"
 - **安装组件**：依赖自动勾选（选 gpu-operator 自动带上 nfd），参数表单由 schema.json 渲染，提供"查看将要创建的 YAML"
@@ -74,11 +74,11 @@
 
 ## 5. 技术栈
 
-前端用系统 webview 承载，业务逻辑全部在 Go 侧。进程内启动一个只监听 `127.0.0.1` 的 HTTP 服务，页面（`gui/web/`，原生 HTML / CSS / JS，无构建步骤）与 JSON API 都由它提供；[webview_go](https://github.com/webview/webview_go) 打开一个指向该地址的原生窗口：
+窗口由 [Wails](https://wails.io) v2.17.0 提供，业务逻辑全部在 Go 侧。页面（`gui/frontend/`，原生 HTML / CSS / JS，无构建步骤）经 `//go:embed` 打进二进制，由 Wails 的资源服务提供；页面通过 Wails 绑定调用 `gui/api.go` 中 `App` 的方法，不经过 HTTP。
 
 - macOS：WKWebView
 - Windows：WebView2（需要运行时，Windows 10/11 通常已预装）
-- Linux：WebKitGTK 4.0（webview_go 链接 `webkit2gtk-4.0`）
+- Linux：WebKitGTK 4.0（Wails v2 默认链接 `webkit2gtk-4.0`）
 
 API 直接用 `pkg/kube`、`pkg/catalog` 访问 API Server，与 operator 共用同一套业务代码，没有额外的后端服务。
 
@@ -86,25 +86,24 @@ API 直接用 `pkg/kube`、`pkg/catalog` 访问 API Server，与 operator 共用
 
 - 页面状态保存在一个 JS 对象里，`render()` 按状态重建 DOM；DOM 只用 `el()` 构造，不使用 `innerHTML`
 - 概览页每 8 秒刷新，只重绘内容区；安装 Flux、安装、更新参数、卸载需要二次点击确认；添加 catalog 源为单击。写操作成功后刷新概览与组件页
-- 写操作在服务端串行执行（进程内互斥锁），每次执行前重新读取集群状态并校验 catalog 守卫（可安装、可更新、可卸载、托管），页面上的按钮状态只是提示
+- 写操作在 Go 端串行执行（`App` 的互斥锁），每次执行前重新读取集群状态并校验 catalog 守卫（可安装、可更新、可卸载、托管），页面上的按钮状态只是提示
 - 每个请求带超时：读取 15 秒，写入 30 秒
 
 安全：
 
-- 每次启动生成 32 字节随机 token，写进页面的 `<meta>`；所有 `/api/` 请求必须带 `X-Kubeyard-Token`，缺失或错误返回 401
-- Host 白名单（只接受 `127.0.0.1:<port>` 与 `localhost:<port>`），防止 DNS rebinding 把外部页面带进本地服务
-- 响应带 `Content-Security-Policy`（只允许同源脚本与样式）与 `X-Frame-Options: DENY`
-- 服务只绑定回环地址，不对局域网开放
+- 没有 HTTP 服务、没有监听端口：页面只能调用 `App` 上绑定的方法，同机其他进程与局域网都无法访问
+- 页面只加载应用自带的脚本与样式，`index.html` 中的 CSP 限定为同源（`script-src 'self'`）
+- 管理员 kubeconfig 不进入页面：导出由 Go 写入用户选择的文件（权限 0600），写入前记录审计 Event
+- 写操作在 Go 端再次校验 catalog 守卫，页面的按钮状态只是提示
 
 深色模式：CSS 变量跟随 `prefers-color-scheme`，侧边栏可手动切换"跟随系统 / 浅色 / 深色"，两套 token 对应 DESIGN.md。
 
 调试：
 
-- `go run ./gui -headless` 只启动服务并打印地址，用浏览器打开即可测试页面，也便于脚本化测试 API
-- `-debug` 打开 webview 的开发者工具
-- `-addr` 指定监听地址（默认 `127.0.0.1:0`，随机端口）
+- 直接运行 GUI 二进制必须带 `production` 标签：`go build -tags production -o kubeyard-gui ./gui`。不带标签时 Wails 会打印 "Wails applications will not build without the correct build tags" 并退出
+- 开发者工具：`go build -tags production,devtools ./gui`
 
-构建要求：webview_go 使用 cgo，本地构建需要 C 编译器（macOS 为 Xcode Command Line Tools，Linux 为 `libgtk-3-dev libwebkit2gtk-4.0-dev`）。CI（`.github/workflows/ci.yml`）在 Linux、macOS、Windows 上构建并测试全部包，包括 GUI。`pkg/` 不依赖 webview，operator 仍可纯 Go 构建。
+构建要求：Wails 使用 cgo，本地构建需要 C 编译器与系统 webview（macOS 为 Xcode Command Line Tools；Linux 为 `libgtk-3-dev libwebkit2gtk-4.0-dev`；Windows 需要 WebView2 运行时）。macOS 上直接 `go build` 时还要链接 UniformTypeIdentifiers：`CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags production ./gui`；`wails build` 会自动加上该参数。`gui/wails.json` 供 `wails build` 打包 `.app` / `.exe` 使用，前端没有 npm 步骤。CI（`.github/workflows/ci.yml`）在 Linux、macOS、Windows 上构建并测试全部包，包括 GUI。`pkg/` 不依赖 Wails，operator 仍可纯 Go 构建。
 
 风险与对策：
 
@@ -112,7 +111,7 @@ API 直接用 `pkg/kube`、`pkg/catalog` 访问 API Server，与 operator 共用
 |---|---|---|
 | cgo 构建 | 交叉编译与 CI 需要对应平台的 C 工具链 | GUI 与 operator 分开构建；`pkg/` 不依赖 cgo |
 | 平台 webview 差异 | WKWebView、WebView2、WebKitGTK 的 CSS / JS 支持略有不同 | 页面只用 Geist 系统字体栈与稳定的 CSS 特性；每个平台发版前手动验证 |
-| 本地服务被攻击 | 同机其他进程或网页可能访问回环端口 | token、Host 白名单、CSP、只绑回环；写操作服务端再校验 |
+| 页面被注入或同机进程滥用 | 页面能调用的 `App` 方法即攻击面 | 没有端口；CSP 限同源；管理员凭证只写文件不进页面；写操作服务端再校验 |
 | 页面与 Go 类型不一致 | JSON 结构手写 | DTO 集中在 `gui/view.go`，有单元测试覆盖关键字段 |
 
 关于参考对象：截图中"任务 / 沙箱 / 模板 / 存储卷 / 镜像"等导航来自 NeoGPU 控制台，Kube Studio 公开文档只覆盖集群创建、连接、扩容与监控。这里只借鉴截图的布局与视觉风格，功能范围以本文第 2 节为准。

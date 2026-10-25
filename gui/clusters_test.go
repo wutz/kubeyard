@@ -128,21 +128,20 @@ func TestVirtualClustersJSONShape(t *testing.T) {
 		virtualClustersPath: clustersList,
 		nodePoolsPath:       nodePoolsList,
 	}))
-	s := testServer(t)
-	rec := do(t, s.handler(), "GET", "/api/virtualclusters?context=fake", testHost, map[string]string{tokenHeader: s.token}, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	got, err := NewApp().VirtualClusters("fake")
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	var top struct {
 		Installed json.RawMessage   `json:"installed"`
 		Clusters  []json.RawMessage `json:"clusters"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &top); err != nil {
+	if err := json.Unmarshal([]byte(wire(t, got)), &top); err != nil {
 		t.Fatal(err)
 	}
 	if string(top.Installed) != "true" || len(top.Clusters) != 1 {
-		t.Fatalf("installed = %s, clusters = %d; body %s", top.Installed, len(top.Clusters), rec.Body.String())
+		t.Fatalf("installed = %s, clusters = %d", top.Installed, len(top.Clusters))
 	}
 	var cluster map[string]json.RawMessage
 	if err := json.Unmarshal(top.Clusters[0], &cluster); err != nil {
@@ -151,10 +150,6 @@ func TestVirtualClustersJSONShape(t *testing.T) {
 	assertKeys(t, "cluster", cluster, "name", "displayName", "description", "phase", "priority", "preemptible",
 		"provider", "mode", "version", "endpoint", "exposure", "claims", "allocations", "adminKubeconfig", "conditions")
 
-	var got virtualClustersView
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
 	c := got.Clusters[0]
 	if c.Name != "acme-prod" || c.Phase != "Ready" || c.Priority != 100 || !c.Preemptible || !c.AdminKubeconfig {
 		t.Errorf("cluster = %+v", c)
@@ -173,22 +168,13 @@ func TestVirtualClustersJSONShape(t *testing.T) {
 
 func TestVirtualClustersNotInstalled(t *testing.T) {
 	fakeCluster(t, serveLists(nil))
-	s := testServer(t)
-	rec := do(t, s.handler(), "GET", "/api/virtualclusters?context=fake", testHost, map[string]string{tokenHeader: s.token}, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	got, err := NewApp().VirtualClusters("fake")
+	if err != nil {
+		t.Fatal(err)
 	}
-	body := rec.Body.String()
+	body := wire(t, got)
 	if !strings.Contains(body, `"installed":false`) || !strings.Contains(body, `"clusters":[]`) {
 		t.Errorf("body = %s, want installed false and an empty list", body)
-	}
-}
-
-func TestVirtualClustersRequiresToken(t *testing.T) {
-	s := testServer(t)
-	rec := do(t, s.handler(), "GET", "/api/virtualclusters?context=fake", testHost, nil, "")
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
 
@@ -198,12 +184,7 @@ func TestVirtualClustersForbiddenIsAnError(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(forbiddenStatus))
 	}))
-	s := testServer(t)
-	rec := do(t, s.handler(), "GET", "/api/virtualclusters?context=fake", testHost, map[string]string{tokenHeader: s.token}, "")
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d (body %s)", rec.Code, http.StatusBadGateway, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), `"installed"`) {
-		t.Errorf("body = %s, want an error, not a page", rec.Body.String())
+	if _, err := NewApp().VirtualClusters("fake"); err == nil {
+		t.Fatal("VirtualClusters returned no error for a forbidden list")
 	}
 }

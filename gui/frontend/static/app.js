@@ -1,11 +1,10 @@
 'use strict';
 
-// The page is a view of the state below. Reads and writes go to the local API
-// (see gui/server.go), which talks to the selected context's API server. A
-// write is confirmed with a second click, then the page reloads both the
-// overview and the catalog.
+// The page is a view of the state below. Reads and writes call the methods of
+// App (gui/app.go, gui/api.go) through the Wails bindings, and those talk to the
+// selected context's API server. A write is confirmed with a second click, then
+// the page reloads both the overview and the catalog.
 
-const token = document.querySelector('meta[name="kubeyard-token"]').content;
 const POLL_MS = 8000;
 
 const state = {
@@ -32,9 +31,6 @@ const state = {
   clustersAt: null,
   // selectedCluster names the virtual cluster whose detail is open.
   selectedCluster: '',
-  // exported holds a kubeconfig returned by the API. The page shows it until
-  // it is dismissed, and never stores it.
-  exported: null,
   selectedAddon: '',
   // form holds the install form of one addon: its path-keyed fields.
   form: null,
@@ -64,23 +60,35 @@ const STATUS_LABEL = {
   unknown: ['无法判断', ''],
 };
 
-async function api(method, path, body) {
-  const opts = { method, headers: { 'X-Kubeyard-Token': token } };
-  if (body !== undefined) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
+// call runs a method of App through the Wails bindings. Wails rejects with the
+// error text, so the rejection is turned into an Error the page can show.
+async function call(method, ...args) {
+  if (!window.go) throw new Error('Wails 绑定不可用，请在 Kubeyard 窗口中打开本页面');
+  try {
+    return await window.go.main.App[method](...args);
+  } catch (err) {
+    throw new Error(typeof err === 'string' ? err : err.message);
   }
-  const res = await fetch(path, opts);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
+}
+
+// setTitlebar tells the CSS whether the window has a hidden title bar. Only macOS
+// hides it (gui/main.go), so the page leaves room for the traffic lights there.
+function setTitlebar() {
+  if (!window.runtime) return;
+  window.runtime
+    .Environment()
+    .then((env) => {
+      document.documentElement.dataset.titlebar = env.platform === 'darwin' ? 'hidden' : 'native';
+    })
+    .catch(() => {});
 }
 
 // --- loading -----------------------------------------------------------------
 
 async function init() {
+  setTitlebar();
   try {
-    const data = await api('GET', '/api/contexts');
+    const data = await call('Contexts');
     state.contexts = data.contexts;
     state.contextError = data.error || '';
     const current = data.contexts.find((c) => c.current) || data.contexts[0];
@@ -102,7 +110,7 @@ async function refreshOverview() {
   state.overviewLoading = true;
   renderContent();
   try {
-    const ov = await api('GET', `/api/overview?context=${encodeURIComponent(name)}`);
+    const ov = await call('Overview', name);
     if (seq !== overviewSeq) return;
     state.overview = ov;
     state.overviewError = '';
@@ -126,7 +134,7 @@ async function refreshCatalog() {
   state.catalogLoading = true;
   renderContent();
   try {
-    const cat = await api('GET', `/api/catalog?context=${encodeURIComponent(name)}`);
+    const cat = await call('Catalog', name);
     if (seq !== catalogSeq) return;
     state.catalog = cat;
     state.catalogError = '';
@@ -149,7 +157,7 @@ async function refreshPools() {
   state.poolsLoading = true;
   renderContent();
   try {
-    const view = await api('GET', `/api/pools?context=${encodeURIComponent(name)}`);
+    const view = await call('Pools', name);
     if (seq !== poolsSeq) return;
     state.pools = view;
     state.poolsError = '';
@@ -173,7 +181,7 @@ async function refreshClusters() {
   state.clustersLoading = true;
   renderContent();
   try {
-    const view = await api('GET', `/api/virtualclusters?context=${enc(name)}`);
+    const view = await call('VirtualClusters', name);
     if (seq !== clustersSeq) return;
     state.clusters = view;
     state.clustersError = '';
@@ -190,10 +198,11 @@ async function refreshClusters() {
   }
 }
 
-// write sends a cluster write for the selected context. A successful write
-// clears the install form, so the form starts again from what the cluster now
-// runs. A failed one keeps what the user typed.
-async function write(path, scope, extra) {
+// write calls a cluster write method of App for the selected context, with the
+// arguments after the context. A successful write clears the install form, so
+// the form starts again from what the cluster now runs. A failed one keeps what
+// the user typed.
+async function write(method, scope, args = []) {
   const context = state.selected;
   state.busy = true;
   state.confirm = '';
@@ -203,8 +212,7 @@ async function write(path, scope, extra) {
   renderContent();
   let ok = false;
   try {
-    const res = await api('POST', path, { context, ...extra });
-    state.notice = res.message;
+    state.notice = await call(method, context, ...args);
     ok = true;
   } catch (err) {
     state.actionError = err.message;
@@ -230,15 +238,13 @@ function selectContext(name) {
   state.poolsError = '';
   state.poolsLoading = false;
   state.poolsAt = null;
-  // The same for the virtual cluster page; an exported kubeconfig belongs to
-  // the context it came from, so it goes with it.
+  // The same for the virtual cluster page.
   clustersSeq++;
   state.clusters = null;
   state.clustersError = '';
   state.clustersLoading = false;
   state.clustersAt = null;
   state.selectedCluster = '';
-  state.exported = null;
   state.selectedAddon = '';
   state.form = null;
   state.confirm = '';
@@ -269,7 +275,6 @@ function selectCluster(name) {
   state.confirm = '';
   state.notice = '';
   state.actionError = '';
-  state.exported = null;
   renderContent();
 }
 
@@ -333,10 +338,6 @@ function el(tag, attrs, ...children) {
 
 function list(v) {
   return Array.isArray(v) ? v : [];
-}
-
-function enc(s) {
-  return encodeURIComponent(s);
 }
 
 function gib(bytes) {
@@ -831,7 +832,6 @@ function clusterDetail(c) {
         )
       : null,
     messages('cluster'),
-    state.exported && state.exported.name === c.name ? exportPanel(state.exported) : null,
   );
 }
 
@@ -862,64 +862,26 @@ function allocationTable(allocs) {
   );
 }
 
-// exportAdminKubeconfig asks the API for the credential. The export is audited
-// on the server before it is returned, so a failed write shows the error here.
+// exportAdminKubeconfig has the app save the credential to a file the user picks
+// in a save dialog, so the credential never reaches the page. The export is
+// audited before the file is written, so a failed export shows the error here.
+// A cancelled dialog exports nothing and shows nothing.
 async function exportAdminKubeconfig(name) {
   state.busy = true;
   state.confirm = '';
   state.notice = '';
   state.actionError = '';
   state.actionScope = 'cluster';
-  state.exported = null;
   renderContent();
   try {
-    const res = await api('POST', `/api/virtualclusters/${enc(name)}/admin-kubeconfig`, {
-      context: state.selected,
-      confirm: name,
-    });
-    state.exported = { name, kubeconfig: res.kubeconfig };
+    const path = await call('ExportAdminKubeconfig', state.selected, name, name);
+    if (path) state.notice = `已导出到 ${path}，导出已写入审计 Event。`;
   } catch (err) {
     state.actionError = err.message;
   } finally {
     state.busy = false;
     renderContent();
   }
-}
-
-function exportPanel(exp) {
-  return el(
-    'div',
-    { class: 'stack' },
-    alert('已导出。离开此页后不会保留，请立即保存。', 'success'),
-    el(
-      'div',
-      { class: 'actions' },
-      el('button', { class: 'btn', onclick: () => downloadKubeconfig(exp) }, '下载文件'),
-      el(
-        'button',
-        {
-          class: 'btn',
-          onclick: () => {
-            state.exported = null;
-            state.notice = '';
-            renderContent();
-          },
-        },
-        '关闭',
-      ),
-    ),
-    el('pre', { class: 'kubeconfig mono small' }, exp.kubeconfig),
-  );
-}
-
-function downloadKubeconfig(exp) {
-  const blob = new Blob([exp.kubeconfig], { type: 'application/yaml' });
-  const url = URL.createObjectURL(blob);
-  const a = el('a', { href: url, download: `${exp.name}-admin.kubeconfig` });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 // --- resource pools ----------------------------------------------------------
@@ -1030,7 +992,7 @@ function sourcePanel(cat) {
   if (cat.fluxInstallable) {
     actions.push(
       confirmButton('flux', '安装 Flux', '确认安装 Flux', {
-        run: () => write('/api/flux', 'source', {}),
+        run: () => write('InstallFlux', 'source'),
       }),
     );
   }
@@ -1038,7 +1000,7 @@ function sourcePanel(cat) {
     actions.push(
       el(
         'button',
-        { class: 'btn', disabled: state.busy, onclick: () => write('/api/catalog-source', 'source', {}) },
+        { class: 'btn', disabled: state.busy, onclick: () => write('AddCatalogSource', 'source') },
         '添加 catalog 源',
       ),
     );
@@ -1225,8 +1187,7 @@ function paramForm(ad, form) {
 // actionRow shows install, update and uninstall. A button is disabled when the
 // catalog or the cluster refuses the action, and the reason is shown below.
 function actionRow(ad) {
-  const addonPath = `/api/addons/${enc(ad.name)}`;
-  const fieldsOf = () => ({ fields: state.form ? state.form.fields : {} });
+  const fieldsOf = () => (state.form ? state.form.fields : {});
   const uninstallWarning =
     state.confirm === 'uninstall' && !ad.uninstallBlocked && ad.uninstallWarning ? ad.uninstallWarning : '';
   return el(
@@ -1238,17 +1199,17 @@ function actionRow(ad) {
       confirmButton('install', '安装', '确认安装', {
         cls: 'btn btn-primary',
         disabled: Boolean(ad.installBlocked),
-        run: () => write(`${addonPath}/install`, 'addon', fieldsOf()),
+        run: () => write('InstallAddon', 'addon', [ad.name, fieldsOf()]),
       }),
       ad.managed
         ? confirmButton('update', '更新参数', '确认更新', {
-            run: () => write(`${addonPath}/update`, 'addon', fieldsOf()),
+            run: () => write('UpdateAddon', 'addon', [ad.name, fieldsOf()]),
           })
         : null,
       confirmButton('uninstall', '卸载', '确认卸载', {
         confirmCls: 'btn btn-danger',
         disabled: Boolean(ad.uninstallBlocked),
-        run: () => write(`${addonPath}/uninstall`, 'addon', {}),
+        run: () => write('UninstallAddon', 'addon', [ad.name]),
       }),
       cancelButton(),
       state.busy ? el('span', { class: 'muted small' }, '正在提交到集群…') : null,
