@@ -503,3 +503,8 @@ Cards are rectangles at 12–16px radius; marketing buttons and category tabs ar
 ### 深色模式
 
 - canvas #0a0a0a、elevated #171717、hairline #262626、ink #ededed、body #a1a1a1；accent 提亮为 #818cf8。
+
+### 图标（Logo）
+
+- 应用图标源文件为 `gui/build/appicon.svg`，导出为 1024px 的 `gui/build/appicon.png`。圆角方形（`rx` 232）底色为 `{colors.accent}`，白色的 K 由一根竖线、两根斜线和五个节点组成，节点代表集群与资源池。
+- 图标只使用主题色与白色，不加渐变、阴影或文字。界面内不重复放置 logo，侧边栏顶部只保留收起按钮。

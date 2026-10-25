@@ -2,4 +2,6 @@
 /bin/
 /dist/
 *.kubeconfig
-/gui/build/
+/gui/build/*
+!/gui/build/appicon.png
+!/gui/build/appicon.svg
