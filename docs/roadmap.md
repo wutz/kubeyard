@@ -97,7 +97,7 @@
   - [x] GUI 侧（宿主管理员视角，[#34](https://github.com/wutz/kubeyard/pull/34)）：虚拟集群详情页在 `Preempting=True` 时显示"即将回收"提示，列出条件消息。
   - 2026-10-25 k3d 实测（真实 operator 在宿主机运行，`gui/live_reclaim_test.go`，设置 `KUBEYARD_LIVE_RECLAIM` 时运行）：`low` 持有节点时，`high` 到达，operator 写入 `Preempting=True`（NodesReclaimed，列出节点与截止时间）与 `default` 下的 Warning Event；`App.VirtualClusters` 读到该条件；移交后条件清除。把抓取到的真实返回值交给详情页渲染，横幅显示正确（静态页 + Wails 绑定替身）。未验证：在 Wails 原生窗口内点击操作，本机未自动化该窗口。
     - 2026-10-25 本地 k3d 实测（operator 二进制在宿主机运行，单节点 NodePool，grace 30s / drainTimeout 60s）：low 持有节点并运行 Pod，high（优先级 5）到达后 low 出现 Event 与条件，条件内容为 `1 个节点将于 … 前回收：[k3d-kubeyard-gui-agent-0]`；grace 到期后 Pod 被驱逐，约 10 秒内节点移交给 high，条件消失，Event 仅 1 条，operator 日志 0 条错误。测试后已删除验证对象并清除节点标签与 taint。
-  - [ ] GUI 侧：虚拟集群详情页显示"即将回收"（待做）
+  - [x] GUI 侧验证（2026-10-25，k3d，按用户路径操作）：`low` 持有节点时，把 `high` 的 desired 调为 1，`low` 详情页出现"即将回收"横幅，内容为节点与截止时间；横幅内的节点列表原先显示为 `[k3d-kubeyard-ux-agent-0]`（Go 切片格式），已在 [#40](https://github.com/wutz/kubeyard/pull/40) 修为逗号分隔。移交给 `high` 后 `Preempting` 条件清除（API 确认）。未在修复后的 operator 上复测横幅文案。
 
 ## M4 计量
 
