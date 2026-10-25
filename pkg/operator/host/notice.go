@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -105,7 +106,7 @@ func (r *Reconciler) saveNotices(ctx context.Context, now time.Time) error {
 				Type:    PreemptingCondition,
 				Status:  metav1.ConditionTrue,
 				Reason:  preemptingReason,
-				Message: fmt.Sprintf("%d 个节点将于 %s 前回收：%v", len(n.nodes), n.deadline.Format(time.RFC3339), n.nodes),
+				Message: fmt.Sprintf("%d 个节点将于 %s 前回收：%s", len(n.nodes), n.deadline.Format(time.RFC3339), strings.Join(n.nodes, ", ")),
 			})
 		} else {
 			meta.RemoveStatusCondition(&vc.Status.Conditions, PreemptingCondition)
