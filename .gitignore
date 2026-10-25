@@ -2,3 +2,4 @@
 /bin/
 /dist/
 *.kubeconfig
+/gui/build/

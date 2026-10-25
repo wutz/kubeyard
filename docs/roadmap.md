@@ -32,6 +32,7 @@
 - [x] 添加 catalog 源：公钥随二进制嵌入，创建校验签名的 OCIRepository；源已存在或 Flux 未安装时不显示
 - 版本升级不作为 GUI 操作：OCIRepository 跟随 stable tag 由 Flux 自动拉取（范围决定，见 catalog.md）
 - [x] GUI 改为 webview：本地 loopback 服务 + 系统 webview，token / Host / CSP 保护，业务逻辑沿用 `pkg/`
+- [x] GUI 改为 Wails v2.17.0：去掉 loopback HTTP 服务与 token / Host / CSP 守卫，页面经 Wails 绑定调用 `App` 方法（不开端口）；管理员 kubeconfig 导出改为原生保存对话框，凭证由 Go 写入文件、不进入页面；业务逻辑沿用 `pkg/`。上一条 webview 记录保留为历史
 - [ ] 写入路径的端到端验证未完成（M1 未完成关闭的原因）。
   - 2026-10-24，GUI 在 k3d 上验证（headless 服务，经 API 与浏览器页面操作）：`/api/contexts`、`/api/overview`、`/api/catalog` 返回正确；守卫拒绝重复安装 Flux、重复添加 catalog 源、重复安装 nfd、卸载非 Kubeyard 组件、未知组件，错误 token 返回 401，外部 Host 返回 403。卸载 nfd 后经 API 重新安装，Flux 协调到 Ready；参数更新经 API 与组件页两种方式都在 Deployment 上生效（nfd master 2→3→2）。
   - 发现并修复：参数 ConfigMap 未带 Flux 的 `reconcile.fluxcd.io/watch=Enabled` 标签，参数更新要等 Kustomization / HelmRelease 的 10 分钟间隔才生效（手动 reconcile 即时生效）。现在安装与更新都写入该标签，k3d 上更新约 5 秒生效，由 `TestInstallLabelsParamsForFluxWatch` 覆盖。

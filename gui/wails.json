@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Kubeyard",
+  "outputfilename": "kubeyard-gui",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "",
+  "wailsjsdir": "./build/wailsjs",
+  "author": {
+    "name": "Taizeng Wu"
+  }
+}

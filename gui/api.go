@@ -2,19 +2,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net/http"
+	"os"
+	"time"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 	"github.com/wutz/kubeyard/pkg/kube"
 )
 
-// The handlers for the reads and writes the page makes. Reads answer with the
-// views in view.go. Writes run in the background of the request and answer
-// with a message, or with an error the page shows.
+// The methods the page calls through Wails bindings. Reads answer with the views
+// in view.go. Writes run in the background of the call and answer with a
+// message, or with an error the page shows. Wails sends an error to the page as
+// its text.
 
 // contextsView lists the kubeconfig contexts. Error explains why the list could
 // not be read, when it could not.
@@ -28,7 +33,8 @@ type contextView struct {
 	Current bool   `json:"current"`
 }
 
-func (s *server) contexts(w http.ResponseWriter, r *http.Request) {
+// Contexts lists the kubeconfig contexts.
+func (a *App) Contexts() contextsView {
 	out := contextsView{Contexts: []contextView{}}
 	list, err := kube.Contexts()
 	if err != nil {
@@ -37,140 +43,133 @@ func (s *server) contexts(w http.ResponseWriter, r *http.Request) {
 	for _, c := range list {
 		out.Contexts = append(out.Contexts, contextView{Name: c.Name, Current: c.Current})
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
-func (s *server) overview(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), loadTimeout)
+// Overview reads the nodes and pods of a context.
+func (a *App) Overview(contextName string) (overviewView, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	defer cancel()
-	ov, err := loadOverview(ctx, r.URL.Query().Get("context"))
+	ov, err := loadOverview(ctx, contextName)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
+		return overviewView{}, err
 	}
-	writeJSON(w, http.StatusOK, toOverviewView(ov))
+	return toOverviewView(ov), nil
 }
 
-func (s *server) pools(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), loadTimeout)
+// Pools reads the resource pool page of a context.
+func (a *App) Pools(contextName string) (poolsView, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	defer cancel()
-	pv, err := loadPools(ctx, r.URL.Query().Get("context"))
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, pv)
+	return loadPools(ctx, contextName)
 }
 
-func (s *server) virtualClusters(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), loadTimeout)
+// VirtualClusters reads the virtual cluster page of a context.
+func (a *App) VirtualClusters(contextName string) (virtualClustersView, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	defer cancel()
-	vc, err := loadVirtualClusters(ctx, r.URL.Query().Get("context"))
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, vc)
+	return loadVirtualClusters(ctx, contextName)
 }
 
-func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), loadTimeout)
+// Catalog reads the component catalog of a context and what its cluster runs.
+func (a *App) Catalog(contextName string) (catalogView, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	defer cancel()
-	cat, err := loadCatalog(ctx, r.URL.Query().Get("context"))
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, cat)
+	return loadCatalog(ctx, contextName)
 }
 
-func (s *server) installFlux(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeWrite(w, r)
-	if !ok {
-		return
-	}
-	s.write(w, req.Context, "安装 Flux", "已提交安装 Flux，控制器就绪后组件会出现，可稍后刷新", kube.FluxInstallTimeout,
+// InstallFlux installs Flux into the context.
+func (a *App) InstallFlux(contextName string) (string, error) {
+	return a.write(contextName, "安装 Flux", "已提交安装 Flux，控制器就绪后组件会出现，可稍后刷新", kube.FluxInstallTimeout,
 		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
-			return kube.InstallFlux(ctx, req.Context, cfg, cs, dc)
+			return kube.InstallFlux(ctx, contextName, cfg, cs, dc)
 		})
 }
 
-func (s *server) addSource(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeWrite(w, r)
-	if !ok {
-		return
-	}
-	s.write(w, req.Context, "添加 catalog 源", "已添加 catalog 源，Flux 拉取并校验后组件会出现，可稍后刷新", actionTimeout, addCatalogSource)
+// AddCatalogSource adds the default catalog source to the context.
+func (a *App) AddCatalogSource(contextName string) (string, error) {
+	return a.write(contextName, "添加 catalog 源", "已添加 catalog 源，Flux 拉取并校验后组件会出现，可稍后刷新", actionTimeout, addCatalogSource)
 }
 
-func (s *server) installAddon(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeWrite(w, r)
-	if !ok {
-		return
-	}
-	name := r.PathValue("name")
-	s.write(w, req.Context, "安装", "已提交安装，Flux 正在协调，状态会在刷新后更新", actionTimeout,
+// InstallAddon installs an addon from the catalog with the form's fields.
+func (a *App) InstallAddon(contextName, name string, fields map[string]any) (string, error) {
+	return a.write(contextName, "安装", "已提交安装，Flux 正在协调，状态会在刷新后更新", actionTimeout,
 		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
-			return installAddon(ctx, cfg, cs, dc, name, req.Fields)
+			return installAddon(ctx, cfg, cs, dc, name, fields)
 		})
 }
 
-func (s *server) updateAddon(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeWrite(w, r)
-	if !ok {
-		return
-	}
-	name := r.PathValue("name")
-	s.write(w, req.Context, "更新参数", "已写入参数，状态会在刷新后更新", actionTimeout,
+// UpdateAddon rewrites the parameters of an addon Kubeyard installed.
+func (a *App) UpdateAddon(contextName, name string, fields map[string]any) (string, error) {
+	return a.write(contextName, "更新参数", "已写入参数，状态会在刷新后更新", actionTimeout,
 		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
-			return updateAddon(ctx, cfg, cs, dc, name, req.Fields)
+			return updateAddon(ctx, cfg, cs, dc, name, fields)
 		})
 }
 
-func (s *server) uninstallAddon(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeWrite(w, r)
-	if !ok {
-		return
-	}
-	name := r.PathValue("name")
-	s.write(w, req.Context, "卸载", "已提交卸载，Flux 回收完成后状态会更新", actionTimeout,
+// UninstallAddon removes an addon Kubeyard installed.
+func (a *App) UninstallAddon(contextName, name string) (string, error) {
+	return a.write(contextName, "卸载", "已提交卸载，Flux 回收完成后状态会更新", actionTimeout,
 		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
 			return uninstallAddon(ctx, cfg, cs, dc, name)
 		})
 }
 
-// exportAdminKubeconfig returns the cluster-admin kubeconfig of a VirtualCluster
-// (docs/operator.md §4.1). The request must repeat the VirtualCluster name in
-// confirm. The audit Event is written before the credential is returned, so an
-// export without a record is not possible.
-func (s *server) exportAdminKubeconfig(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeWrite(w, r)
-	if !ok {
-		return
+// ExportAdminKubeconfig saves the cluster-admin kubeconfig of a VirtualCluster
+// (docs/operator.md §4.1). confirm must repeat the VirtualCluster name. The user
+// picks the file in a save dialog first, so the credential is written to the
+// file and never returned to the page. The audit Event is written before the
+// file, so an export without a record is not possible. The result is the path
+// written, or "" when the user cancelled the dialog.
+func (a *App) ExportAdminKubeconfig(contextName, name, confirm string) (string, error) {
+	if contextName == "" {
+		return "", errors.New("缺少 context")
 	}
-	name := r.PathValue("name")
-	if req.Confirm != name {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("请输入虚拟集群名称 %s 以确认导出", name))
-		return
+	if confirm != name {
+		return "", fmt.Errorf("请输入虚拟集群名称 %s 以确认导出", name)
 	}
-	_, cs, dc, err := clients(req.Context)
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "导出管理员 kubeconfig",
+		DefaultFilename: name + "-admin.kubeconfig",
+		Filters:         []runtime.FileFilter{{DisplayName: "kubeconfig", Pattern: "*.kubeconfig;*.yaml"}},
+	})
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
+		return "", err
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), actionTimeout)
+	if path == "" {
+		return "", nil
+	}
+	_, cs, dc, err := clients(contextName)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 	defer cancel()
 	data, err := kube.AdminKubeconfig(ctx, cs, dc, name)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
+		return "", err
 	}
-	actor := "GUI（context " + req.Context + "）"
+	actor := "GUI（context " + contextName + "）"
 	if err := kube.RecordExport(ctx, cs, dc, name, actor); err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
+		return "", err
 	}
-	// The response holds a cluster-admin credential, so no cache may keep it.
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]string{"kubeconfig": string(data)})
+	// The file holds a cluster-admin credential, so only its owner may read it.
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// write runs fn against the context and answers with done. A failure is the
+// error, with label in front of it. Writes are serialized, see App.writeMu.
+func (a *App) write(contextName, label, done string, timeout time.Duration, fn action) (string, error) {
+	if contextName == "" {
+		return "", errors.New("缺少 context")
+	}
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+	if err := runAction(contextName, timeout, fn); err != nil {
+		return "", fmt.Errorf("%s失败：%w", label, err)
+	}
+	return done, nil
 }
