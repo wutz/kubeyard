@@ -445,7 +445,6 @@ function sidebar() {
     el(
       'div',
       { class: 'sidebar-head' },
-      el('div', { class: 'brand' }, el('span', { class: 'logo' }, 'K'), 'Kubeyard'),
       iconButton('收起侧边栏', () => setSidebarCollapsed(true)),
     ),
     clusterPicker(),

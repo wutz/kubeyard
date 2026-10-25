@@ -103,20 +103,10 @@ button, select, input { font: inherit; color: inherit; }
 .sidebar-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   height: var(--chrome);
   margin-bottom: 4px;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px;
-  font-weight: 600;
-  font-size: 16px;
-  letter-spacing: -0.4px;
 }
 
 .cluster-picker {
@@ -148,18 +138,6 @@ button, select, input { font: inherit; color: inherit; }
 /* The expand button is only needed while the sidebar is collapsed. */
 .sidebar-expand { display: none; }
 #app.sidebar-collapsed .sidebar-expand { display: inline-grid; }
-
-.logo {
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--ink);
-  color: var(--canvas);
-  font-size: 12px;
-  font-weight: 600;
-}
 
 .nav-group {
   margin: 12px 8px 4px;
