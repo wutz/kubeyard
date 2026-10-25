@@ -26,6 +26,9 @@ const tokenHeader = "X-Kubeyard-Token"
 // tokenPlaceholder is replaced with the token when the page is served.
 const tokenPlaceholder = "__KUBEYARD_TOKEN__"
 
+// titlebarPlaceholder is replaced with titlebarMode when the page is served.
+const titlebarPlaceholder = "__KUBEYARD_TITLEBAR__"
+
 // contentSecurityPolicy lets the page load only its own scripts and styles.
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
 
@@ -107,7 +110,8 @@ func (s *server) validToken(r *http.Request) bool {
 	return subtle.ConstantTimeCompare(got, []byte(s.token)) == 1
 }
 
-// index serves the page with the token in its meta tag.
+// index serves the page with the token in its meta tag and the title bar mode
+// on its html element.
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	page, err := web.ReadFile("web/index.html")
 	if err != nil {
@@ -115,6 +119,7 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page = bytes.Replace(page, []byte(tokenPlaceholder), []byte(s.token), 1)
+	page = bytes.Replace(page, []byte(titlebarPlaceholder), []byte(titlebarMode), 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(page)
 }

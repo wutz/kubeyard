@@ -79,6 +79,12 @@ func TestIndexCarriesTokenAndLockedHeaders(t *testing.T) {
 	if strings.Contains(body, tokenPlaceholder) {
 		t.Errorf("token placeholder was not replaced")
 	}
+	if !strings.Contains(body, `data-titlebar="`+titlebarMode+`"`) {
+		t.Errorf("page does not carry the title bar mode")
+	}
+	if strings.Contains(body, titlebarPlaceholder) {
+		t.Errorf("title bar placeholder was not replaced")
+	}
 	if got := rec.Header().Get("Content-Security-Policy"); got != contentSecurityPolicy {
 		t.Errorf("Content-Security-Policy = %q", got)
 	}
