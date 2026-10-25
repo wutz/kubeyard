@@ -14,6 +14,9 @@
   --success-soft: #d1fae5;
   --error: #ee0000;
   --error-soft: #fee2e2;
+  --warning: #f5a623;
+  --warning-soft: #ffefcf;
+  --warning-deep: #ab570a;
   --sidebar: #f4f4f5;
   --sidebar-active: #e4e4e7;
   --font: Geist, Inter, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
@@ -37,6 +40,9 @@
   --success-soft: #06281d;
   --error: #f87171;
   --error-soft: #3b1212;
+  --warning: #f5a623;
+  --warning-soft: #3a2806;
+  --warning-deep: #fbbf24;
   --sidebar: #111111;
   --sidebar-active: #222222;
   color-scheme: dark;
@@ -418,6 +424,7 @@ tr.selected td { background: var(--accent-soft); }
 
 .alert.error { border-color: var(--error); color: var(--error); }
 .alert.success { border-color: var(--success); color: var(--success); }
+.alert.warning { border-color: var(--warning); background: var(--warning-soft); color: var(--warning-deep); }
 
 .empty {
   display: grid;

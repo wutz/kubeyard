@@ -784,6 +784,9 @@ function clusterDetail(c) {
     ['对外地址', `${exposure.type || '—'} · ${address}`],
   ];
   const conditions = list(c.conditions);
+  // The operator sets Preempting while nodes are being reclaimed for another
+  // cluster (docs/operator.md §3.4 step 2). The admin needs to see it first.
+  const reclaiming = conditions.find((cond) => cond.type === 'Preempting' && cond.status === 'True');
   return el(
     'section',
     { class: 'card stack' },
@@ -793,6 +796,7 @@ function clusterDetail(c) {
       el('div', {}, el('h2', {}, c.displayName || c.name), el('div', { class: 'mono small muted' }, c.name)),
       el('button', { class: 'btn', onclick: () => selectCluster(c.name) }, '收起'),
     ),
+    reclaiming ? el('div', { class: 'alert warning', role: 'status' }, `即将回收：${reclaiming.message || '有节点将被回收'}`) : null,
     c.description ? el('p', { class: 'muted' }, c.description) : null,
     el(
       'div',
