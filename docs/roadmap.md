@@ -70,7 +70,7 @@
   - 2026-10-25 本地 k3d 实测（单节点 NodePool）：min=0 的 VC 获得空闲节点，lease 为 Bound，节点标签与 taint 正确，VC allocations 正确；更高优先级的不可抢占 VC 到达后，节点的 lease 转为该 VC、reason=Preempt、phase=Draining、drainDeadline 为 grace 之后。operator 日志无错误。
   - [x] drain 步骤（`pkg/operator/host/drain.go`，§3.4 步骤 1、3、4、5）：被抢占或被释放的节点先加 `kubeyard.wutz.dev/draining:NoSchedule`；宽限期结束后用 Eviction API 驱逐旧 VC 在 `vc-<name>` 中的 Pod（受 PDB 约束，被拒绝则下一轮重试）；到 drain 截止时间（宽限期 + drainTimeout）强制删除；节点清空后，被抢占的节点移交给申请者（lease Bound，标签与 taint 换成新 VC），被释放的节点解绑并删除 lease。单元测试 4 个，覆盖宽限期、驱逐后移交、PDB 阻塞后强制删除、释放后解绑再分配。
   - 2026-10-25 本地 k3d 实测（真实 API，operator 二进制以 admin kubeconfig 运行）：抢占，无 PDB，宽限期 30s 后 Pod 被驱逐，节点在 t+31s 移交给 high；PDB `minAvailable: 1` 时驱逐被拒绝，Pod 保留到截止时间（30s + 90s）后被强制删除，节点移交给 top；释放 top 后节点解绑，分配器随即按优先级把节点给了 high（而不是 low）。operator 日志无错误。
-  - 已知缺口：§3.4 步骤 2（向受害 VC 发 Event 与 `Preempting` 条件）未实现，归 M3；释放的租约直接删除，未写 UsageReport（§1），归 M4；`--mode=vcluster` 未实现；draining 节点每 10 秒轮询一次，不监听 Pod 事件。
+  - §3.4 步骤 2 已实现（见 M3）；已知缺口：释放的租约直接删除，未写 UsageReport（§1），归 M4；`--mode=vcluster` 未实现；draining 节点每 10 秒轮询一次，不监听 Pod 事件。
   - [x] 准入 webhook（`pkg/webhook`，§3.2、§7）：VirtualCluster 校验 `sum(min) ≤ total − unhealthy`、`min ≤ desired ≤ max`（开启 autoscale 时跳过）、pinnedNodes 存在且匹配选择器、每个节点只被一个 VC pin、poolClaim 的 pool 不重复且存在，valuesOverride 不得触碰 `sync.fromHost.nodes` 与 `sync.toHost.pods`（§2 保留路径），仍持有租约的 VC 拒绝删除；NodePool 校验选择器非空且合法、不与其它池重叠、不把已租出的节点移出选择器。证书自签发（ECDSA P-256，本地 CA + 服务证书，30 天内到期或名字不全时重签），启动时把 CA 写入 `kubeyard-validating` 的 caBundle，不依赖 cert-manager。准入判断直读 API 而非缓存，避免用旧缓存放过超额申请。单元测试 30 个。
   - 2026-10-25 本地 k3d 实测（operator 二进制在宿主机运行，webhook 配置用 `url` 指向 `host.k3d.internal:9443`）：`min=2` 的 VC 在 1 节点池上被拒（"各虚拟集群 min 之和 3 超过健康节点数 1"）；仍持有 Bound 租约的 VC 删除被拒；valuesOverride 写 `sync.fromHost.nodes` 被拒；把已租出的节点移出 NodePool 选择器被拒；合法的 VC（min=1）与 NodePool 创建放行；按拒绝信息把 min/desired 调 0 后租约 Draining → 释放，随后删除放行。operator 日志无错误。
   - 未验证：bz1-dev1 上的运行（只读，未部署）；多节点与 GPU 节点的真实分配；集群内部署形态（Service + 容器内证书目录）未经真实安装验证，只在宿主机上验证了同样的代码路径。
@@ -92,6 +92,9 @@
 - autoscale（Pending Pod 驱动）、空闲缩容
 - 跨 VC 优先级抢占、drain 流程、dry-run 预览
 - VC 管理员侧可见的"即将回收"提示
+  - [x] operator 侧（`pkg/operator/host/notice.go`，§3.4 步骤 2）：抢占时在受害 VC 上写 Warning Event（reason `Preempting`，写在 `default`），并由租约状态派生 VC 的 `Preempting` 条件（`NodesReclaimed`，列出节点与回收截止时间），节点移交后自动清除。`TestPreemptionNoticesVictim` 等 3 个测试覆盖。
+    - 2026-10-25 本地 k3d 实测（operator 二进制在宿主机运行，单节点 NodePool，grace 30s / drainTimeout 60s）：low 持有节点并运行 Pod，high（优先级 5）到达后 low 出现 Event 与条件，条件内容为 `1 个节点将于 … 前回收：[k3d-kubeyard-gui-agent-0]`；grace 到期后 Pod 被驱逐，约 10 秒内节点移交给 high，条件消失，Event 仅 1 条，operator 日志 0 条错误。测试后已删除验证对象并清除节点标签与 taint。
+  - [ ] GUI 侧：虚拟集群详情页显示"即将回收"（待做）
 
 ## M4 计量
 

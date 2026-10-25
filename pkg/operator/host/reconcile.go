@@ -128,6 +128,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.saveAllocations(ctx, &np, o); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.saveNotices(ctx, r.now()); err != nil {
+		return ctrl.Result{}, err
+	}
 	// Pods leave a draining node on their own schedule, and no watch sees that,
 	// so a pool with draining nodes is polled again.
 	if pending {
@@ -303,10 +306,14 @@ func (r *Reconciler) apply(ctx context.Context, np *v1alpha1.NodePool, claims []
 		if l == nil {
 			return fmt.Errorf("preempt %s: no lease", v.Node)
 		}
+		victim := l.Spec.VirtualCluster
 		spec := l.Spec
 		spec.VirtualCluster = v.ForVC
 		spec.Reason = v1alpha1.LeasePreempt
 		if err := r.updateLease(ctx, l, spec, draining(l, deadline)); err != nil {
+			return err
+		}
+		if err := r.notifyPreempted(ctx, victim, v.ForVC, v.Node, deadline, now); err != nil {
 			return err
 		}
 	}
