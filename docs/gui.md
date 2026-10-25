@@ -1,6 +1,6 @@
 # GUI 设计
 
-视觉规范见 [DESIGN.md](../DESIGN.md)（Vercel Geist 风格 + Kubeyard 适配，主题色 Indigo）。布局参考截图：左侧 sidebar，顶部"集群 / 虚拟集群"选择器，右侧内容区带实时刷新。
+视觉规范见 [DESIGN.md](../DESIGN.md)（Vercel Geist 风格 + Kubeyard 适配，主题色 Indigo）。布局参考截图：左侧 sidebar（顶部可收起，"集群"选择器在侧边栏顶部），右侧内容区带实时刷新，窗口无原生标题栏（macOS）。
 
 ## 1. 连接模型
 
@@ -18,7 +18,7 @@
 
 ## 2. 信息架构
 
-顶部选择器："集群"（context）+ 在 host 视图下选择"虚拟集群"。
+侧边栏顶部选择器："集群"（context）。虚拟集群在导航中单独列出。
 
 ### 平台管理员（host 集群）
 

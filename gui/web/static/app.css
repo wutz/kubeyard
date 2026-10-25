@@ -77,11 +77,17 @@ html, body {
 
 button, select, input { font: inherit; color: inherit; }
 
+/* The height of the top row of the sidebar and of the main column. */
+:root { --chrome: 44px; }
+
 #app {
   display: grid;
   grid-template-columns: 224px minmax(0, 1fr);
   height: 100vh;
 }
+
+#app.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+#app.sidebar-collapsed .sidebar { display: none; }
 
 /* Sidebar */
 
@@ -89,20 +95,59 @@ button, select, input { font: inherit; color: inherit; }
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 16px 12px;
+  padding: 0 12px 16px;
   background: var(--sidebar);
   border-right: 1px solid var(--hairline);
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--chrome);
+  margin-bottom: 4px;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px 16px;
+  padding: 0 8px;
   font-weight: 600;
   font-size: 16px;
   letter-spacing: -0.4px;
 }
+
+.cluster-picker {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 12px;
+}
+
+.cluster-picker .status { padding: 0 8px 12px; }
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--mute);
+  cursor: pointer;
+}
+
+.icon-btn:hover { background: var(--sidebar-active); color: var(--ink); }
+.icon-btn svg { fill: none; stroke: currentColor; stroke-width: 1.5; }
+
+/* The expand button is only needed while the sidebar is collapsed. */
+.sidebar-expand { display: none; }
+#app.sidebar-collapsed .sidebar-expand { display: inline-grid; }
 
 .logo {
   display: inline-grid;
@@ -161,15 +206,21 @@ button, select, input { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 52px;
+  height: var(--chrome);
   padding: 0 24px;
-  border-bottom: 1px solid var(--hairline);
   background: var(--canvas);
 }
 
 .topbar .spacer { flex: 1; }
 
 .status { color: var(--mute); font-size: 12px; white-space: nowrap; }
+
+/* The native title bar is hidden on macOS (see gui/titlebar_darwin.go), so
+   the traffic lights sit over the top left corner. The page leaves them room:
+   the sidebar's top row, or the top bar when the sidebar is collapsed. */
+html[data-titlebar="hidden"] { --lights: 76px; }
+html[data-titlebar="hidden"] .sidebar-head { padding-left: var(--lights); }
+html[data-titlebar="hidden"] #app.sidebar-collapsed .topbar { padding-left: calc(var(--lights) + 8px); }
 
 .content {
   flex: 1;
@@ -232,6 +283,7 @@ button, select, input { font: inherit; color: inherit; }
 .btn-danger:hover:not(:disabled) { border-color: var(--error); filter: brightness(1.08); }
 .btn:focus-visible,
 .nav-item:focus-visible,
+.icon-btn:focus-visible,
 .select:focus-visible,
 .input:focus-visible {
   outline: 2px solid var(--accent);

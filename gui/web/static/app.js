@@ -48,6 +48,7 @@ const state = {
   actionError: '',
   actionScope: '',
   theme: localStorage.getItem('theme') || 'auto',
+  sidebarCollapsed: localStorage.getItem('sidebar') === 'collapsed',
 };
 
 // Sequence numbers drop responses that a newer request has overtaken.
@@ -294,6 +295,18 @@ function setTheme(theme) {
   render();
 }
 
+// setSidebarCollapsed only flips a class on the layout, so the page keeps its
+// scroll position. The buttons that show in each state are styled from that class.
+function setSidebarCollapsed(collapsed) {
+  state.sidebarCollapsed = collapsed;
+  localStorage.setItem('sidebar', collapsed ? 'collapsed' : 'open');
+  applySidebar();
+}
+
+function applySidebar() {
+  document.getElementById('app').classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
+}
+
 // --- rendering helpers -------------------------------------------------------
 
 // el builds an element. Keys that start with "on" are event listeners, the
@@ -401,6 +414,7 @@ function messages(scope) {
 function render() {
   document.documentElement.dataset.theme = state.theme === 'auto' ? '' : state.theme;
   document.getElementById('app').replaceChildren(sidebar(), mainColumn());
+  applySidebar();
 }
 
 // renderContent redraws only the page. Polling uses it, so an open context
@@ -427,7 +441,13 @@ function sidebar() {
   return el(
     'aside',
     { class: 'sidebar' },
-    el('div', { class: 'brand' }, el('span', { class: 'logo' }, 'K'), 'Kubeyard'),
+    el(
+      'div',
+      { class: 'sidebar-head' },
+      el('div', { class: 'brand' }, el('span', { class: 'logo' }, 'K'), 'Kubeyard'),
+      iconButton('收起侧边栏', () => setSidebarCollapsed(true)),
+    ),
+    clusterPicker(),
     el('div', { class: 'nav-group' }, '工作区'),
     navItem('overview', '概览'),
     el('div', { class: 'nav-group' }, '资源'),
@@ -437,6 +457,54 @@ function sidebar() {
     navItem('catalog', '组件'),
     el('div', { class: 'sidebar-foot' }, el('label', {}, '主题 ', themeSelect)),
   );
+}
+
+// clusterPicker selects the kubeconfig context the page reads. It sits at the
+// top of the sidebar, where the other selections of the page are made.
+function clusterPicker() {
+  if (!state.contexts.length) return el('div', { class: 'status' }, '未找到 kubeconfig context');
+  return el(
+    'div',
+    { class: 'cluster-picker' },
+    el('span', { class: 'muted small' }, '集群'),
+    el(
+      'select',
+      {
+        class: 'select',
+        'aria-label': '集群',
+        onchange: (e) => selectContext(e.target.value),
+      },
+      state.contexts.map((c) =>
+        el('option', { value: c.name, selected: c.name === state.selected }, c.current ? `${c.name}（当前）` : c.name),
+      ),
+    ),
+  );
+}
+
+// iconButton is a 28px square button with the sidebar glyph. Its label is the
+// accessible name; the buttons show or hide by the layout's collapsed class.
+function iconButton(label, onclick, cls = '') {
+  return el('button', { class: `icon-btn ${cls}`, 'aria-label': label, title: label, onclick }, sidebarGlyph());
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// sidebarGlyph draws a panel with a divider, the usual sidebar toggle.
+function sidebarGlyph() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', '16');
+  svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [tag, attrs] of [
+    ['rect', { x: '1.5', y: '2.5', width: '13', height: '11', rx: '2' }],
+    ['path', { d: 'M6 2.5v11' }],
+  ]) {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    svg.append(node);
+  }
+  return svg;
 }
 
 function navItem(page, label) {
@@ -455,28 +523,16 @@ function mainColumn() {
   return el('div', { class: 'main' }, topbar(), el('main', { class: 'content' }, pageContent()));
 }
 
+// topbar holds the page actions. The expand button is there for the collapsed
+// sidebar only; the CSS shows it when the layout has the sidebar collapsed.
 function topbar() {
   const hasContexts = state.contexts.length > 0;
   return el(
     'header',
     { class: 'topbar' },
-    el('span', { class: 'muted small' }, '集群'),
-    hasContexts
-      ? el(
-          'select',
-          {
-            class: 'select',
-            'aria-label': '集群',
-            onchange: (e) => selectContext(e.target.value),
-          },
-          state.contexts.map((c) =>
-            el('option', { value: c.name, selected: c.name === state.selected }, c.current ? `${c.name}（当前）` : c.name),
-          ),
-        )
-      : null,
-    hasContexts ? el('button', { class: 'btn', onclick: refreshCurrent }, '刷新') : null,
+    iconButton('展开侧边栏', () => setSidebarCollapsed(false), 'sidebar-expand'),
     el('span', { class: 'spacer' }),
-    hasContexts ? null : el('span', { class: 'status' }, '未找到 kubeconfig context'),
+    hasContexts ? el('button', { class: 'btn', onclick: refreshCurrent }, '刷新') : null,
   );
 }
 

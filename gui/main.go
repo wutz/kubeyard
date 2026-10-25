@@ -46,6 +46,7 @@ func main() {
 	w.SetTitle("Kubeyard")
 	w.SetSize(1120, 720, webview.HintNone)
 	w.SetSize(960, 600, webview.HintMin)
+	hideTitlebar(w.Window())
 	w.Navigate(url)
 	w.Run()
 }
