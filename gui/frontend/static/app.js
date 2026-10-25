@@ -219,9 +219,12 @@ async function write(method, scope, args = []) {
   } finally {
     state.busy = false;
   }
-  if (ok) state.form = null;
   renderContent();
   await Promise.all([refreshOverview(), refreshCatalog()]);
+  // Cleared only after the catalog is read again: the form is built from the
+  // catalog the page holds, and until the read ends that one predates the write.
+  if (ok) state.form = null;
+  renderContent();
 }
 
 // --- navigation and selection ------------------------------------------------
