@@ -125,7 +125,15 @@ addon 自己的 HelmRelease（`helm.toolkit.fluxcd.io/v2`）用 `valuesFrom` 引
 
 健康检查支持两类对象：`HelmRelease`（按 release 名判断已安装；同名 Deployment / DaemonSet 存在则为已存在）和 `CustomResourceDefinition`（CRD 存在即为已存在，集群级对象，namespace 留空）。只有 Kustomization 这类无法用 Helm release、工作负载或 CRD 查询的对象才会得到"无法判断"，此时拒绝安装。
 
-卸载 gateway-api-crds 会删除集群中全部 Gateway API 资源。守卫只检查目录中声明的依赖（如 istio）；对于健康检查中声明了 CRD 的组件，GUI 在点击"卸载"后、确认前显示警告，列出将被删除的 CRD（`catalog.Addon.UninstallWarning`）。
+卸载 gateway-api-crds 会删除集群中全部 Gateway API 资源。守卫只检查目录中声明的依赖（如 istio）。
+
+卸载后会残留的东西，GUI 在点击"卸载"后、确认前用警告列出（`catalog.Addon.UninstallWarning`）：
+
+- Helm 安装的组件（健康检查含 `HelmRelease`）：`createNamespace` 创建的 namespace 不属于 Flux，卸载后保留，需要手动删除。目录中所有 Helm 组件都设置了 `createNamespace: true`，警告按此写出。
+- Helm 组件声明的 CRD：chart 带 `helm.sh/resource-policy: keep` 时卸载后保留，需要手动删除。
+- Kustomization 组件声明的 CRD（如 gateway-api-crds）：卸载时由 Flux prune 删除，警告写"会删除"。
+
+namespace 不自动删除，因为里面可能有用户数据（如 Project 的 `deletionPolicy: Retain` 保留的 PVC）。手动删除前先确认其中的资源。
 
 ### 添加 catalog 源
 

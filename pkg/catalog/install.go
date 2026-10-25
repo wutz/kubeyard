@@ -148,20 +148,35 @@ func (a Addon) Installable(status Status, deps map[string]Status) error {
 	return nil
 }
 
-// UninstallWarning says what removing the addon deletes beyond its own
-// workloads: the CRDs its health check names, and every resource of those
-// CRDs. It returns "" when the addon declares no CRD.
+// UninstallWarning says what removing the addon leaves behind or deletes
+// beyond its own workloads. It returns "" when there is nothing to say.
+//
+// A Helm addon (one with a HelmRelease health entry) keeps two things after
+// its release is removed. The namespace stays, because the catalog creates it
+// through Helm's createNamespace and Flux does not own it. The chart's CRDs may
+// stay too, because charts mark them with the keep policy. A Kustomization
+// addon has no such leftovers, so its CRDs and their resources are deleted.
 func (a Addon) UninstallWarning() string {
 	var crds []string
+	helm := false
 	for _, h := range a.Health {
-		if h.Kind == "CustomResourceDefinition" {
+		switch h.Kind {
+		case "CustomResourceDefinition":
 			crds = append(crds, h.Name)
+		case "HelmRelease":
+			helm = true
 		}
 	}
-	if len(crds) == 0 {
-		return ""
+	var parts []string
+	if helm && a.Namespace != "" {
+		parts = append(parts, "namespace "+a.Namespace+" 由 Helm 创建，卸载后保留，需要手动删除")
 	}
-	return "卸载会删除这些 CRD 以及集群中的全部对应资源：" + strings.Join(crds, "、")
+	if len(crds) > 0 && helm {
+		parts = append(parts, "chart 的 CRD 带 keep 策略时卸载后保留，需要手动删除："+strings.Join(crds, "、"))
+	} else if len(crds) > 0 {
+		parts = append(parts, "卸载会删除这些 CRD 以及集群中的全部对应资源："+strings.Join(crds, "、"))
+	}
+	return strings.Join(parts, "；")
 }
 
 // Uninstallable says why the addon cannot be uninstalled now, or returns nil.
