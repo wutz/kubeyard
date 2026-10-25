@@ -115,6 +115,10 @@ func (a *App) UninstallAddon(contextName, name string) (string, error) {
 		})
 }
 
+// saveFileDialog is the native save dialog. A variable, so the local harness can
+// pick the file without a window; the product always uses the dialog.
+var saveFileDialog = runtime.SaveFileDialog
+
 // ExportAdminKubeconfig saves the cluster-admin kubeconfig of a VirtualCluster
 // (docs/operator.md §4.1). confirm must repeat the VirtualCluster name. The user
 // picks the file in a save dialog first, so the credential is written to the
@@ -128,7 +132,7 @@ func (a *App) ExportAdminKubeconfig(contextName, name, confirm string) (string, 
 	if confirm != name {
 		return "", fmt.Errorf("请输入虚拟集群名称 %s 以确认导出", name)
 	}
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	path, err := saveFileDialog(a.ctx, runtime.SaveDialogOptions{
 		Title:           "导出管理员 kubeconfig",
 		DefaultFilename: name + "-admin.kubeconfig",
 		Filters:         []runtime.FileFilter{{DisplayName: "kubeconfig", Pattern: "*.kubeconfig;*.yaml"}},

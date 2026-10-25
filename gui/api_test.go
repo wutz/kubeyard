@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // The API is tested through its methods, the same calls the page makes through
@@ -216,5 +219,15 @@ func TestExportAdminKubeconfigRequiresConfirm(t *testing.T) {
 	_, err := NewApp().ExportAdminKubeconfig("dev", "acme", "acm")
 	if err == nil || !strings.Contains(err.Error(), "确认导出") {
 		t.Fatalf("err = %v, want the confirmation prompt", err)
+	}
+}
+
+func TestExportAdminKubeconfigCancelWritesNothing(t *testing.T) {
+	saved := saveFileDialog
+	t.Cleanup(func() { saveFileDialog = saved })
+	saveFileDialog = func(context.Context, runtime.SaveDialogOptions) (string, error) { return "", nil }
+	path, err := NewApp().ExportAdminKubeconfig("dev", "acme", "acme")
+	if err != nil || path != "" {
+		t.Fatalf("cancel = (%q, %v), want an empty path and no error", path, err)
 	}
 }
