@@ -20,7 +20,7 @@
 - 组件页：浏览、按 schema 填参数、安装 / 升级 / 卸载、查看 Flux 状态与事件
 - 技术验证：webview 概览页与节点表格（GUI 实现改为 webview，见 [GUI 设计](gui.md) §5）
 
-状态（2026-10-25 关闭：写入路径已在 k3d 验证，下列两项需用户决定或确认，不阻塞 M1 关闭）：
+状态（2026-10-25 关闭：写入路径与即将回收提示已在 k3d 验证，卸载残留的决定与 catalog 发布已由用户确认）：
 
 - [x] 概览、节点表格、kubeconfig context 切换
 - [x] catalog 仓库：8 个 host 组件，cosign 签名发布到 GHCR，参数归属由 `x-kubeyard-target` 标记
@@ -39,7 +39,7 @@
   - 发现并修复：参数 ConfigMap 未带 Flux 的 `reconcile.fluxcd.io/watch=Enabled` 标签，参数更新要等 Kustomization / HelmRelease 的 10 分钟间隔才生效（手动 reconcile 即时生效）。现在安装与更新都写入该标签，k3d 上更新约 5 秒生效，由 `TestInstallLabelsParamsForFluxWatch` 覆盖。
   - 发现并修复：Kubeyard 更新 Kustomization 时整对象 Update 会丢掉 Flux 的 `finalizers.fluxcd.io`，之后卸载会跳过 prune，HelmRelease 与工作负载残留（2026-10-24 在 k3d 复现：卸载后 HelmRelease 仍被协调，参数 ConfigMap 已删，Helm 回退为 chart 默认值）。修复：更新时保留现有 finalizer，由 `TestInstallKeepsFluxFinalizer` 覆盖。修复后同一流程（安装 → 更新 → 卸载）在 k3d 上 20 秒内 prune 全部对象，重装后恢复 Ready。
   - 观察并定位：卸载后 `nfd` namespace 仍保留。原因是 catalog 的 nfd 条目带 Helm `install.createNamespace: true`，namespace 由 Helm 创建，不带 Flux 归属，Kustomization prune 只删除 HelmRelease 与 Helm release secret。2026-10-24 在 k3d 上验证：删除 Kustomization `addon-nfd` 后 HelmRelease 与 Helm secret 消失，namespace `nfd` 仍为 Active。同样设置了 `createNamespace` 的还有 cert-manager、forgeai、gpu-operator、istio、metallb、metrics-server、spegel。
-  - 决定（2026-10-25，默认采用 B，待用户确认）：卸载后保留由 Helm 创建的 namespace，并在卸载确认框与文档中说明残留的 namespace 名称和原因。已实现（`UninstallWarning` 按 Helm 组件写出残留的 namespace 与 keep 策略 CRD，`docs/catalog.md` 说明手动删除方式；`TestUninstallWarningKeepsHelmLeftovers` 覆盖）。
+  - 决定（2026-10-25，用户确认 B）：卸载后保留由 Helm 创建的 namespace，并在卸载确认框与文档中说明残留的 namespace 名称和原因。已实现（`UninstallWarning` 按 Helm 组件写出残留的 namespace 与 keep 策略 CRD，`docs/catalog.md` 说明手动删除方式；`TestUninstallWarningKeepsHelmLeftovers` 覆盖）。
     - 理由：(A) 由 Flux 管理 Namespace 对象（`createNamespace: false`），卸载即删除 namespace，这是不可逆的删除。namespace 里可能有用户数据，bz1-dev1 的 `forge-demo` 就是例子：其中 3 个 PVC（130Gi）因 Project 的 `deletionPolicy: Retain` 而保留。(B) 可逆，代价只是残留一个空 namespace。
     - (B) 的范围：卸载确认框列出将保留的 namespace；文档说明如何手动删除；不做自动删除。
     - 若用户选择 (A)：改动在 catalog 的 `createNamespace` 与 Kubeyard 的安装逻辑中，并需要先逐个评估各 namespace 中是否有用户数据。
