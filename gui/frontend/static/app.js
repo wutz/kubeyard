@@ -478,7 +478,7 @@ function clusterPicker() {
         onchange: (e) => selectContext(e.target.value),
       },
       state.contexts.map((c) =>
-        el('option', { value: c.name, selected: c.name === state.selected }, c.current ? `${c.name}（当前）` : c.name),
+        el('option', { value: c.name, selected: c.name === state.selected }, c.name === state.selected ? `${c.name}（当前）` : c.name),
       ),
     ),
   );
