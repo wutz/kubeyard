@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Starts the GUI window, checks that the process stays up, then runs an optional
-# capture command while the window is open. The overview is checked by the
-# TestLiveOverview test in the workflow, not here.
+# capture command while the window is open. The catalog is checked by the
+# TestLiveCatalog test in the workflow, not here.
 #
 # usage: gui-smoke.sh <binary> [capture command]
 set -euo pipefail

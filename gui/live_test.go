@@ -5,19 +5,23 @@ import (
 	"testing"
 )
 
-// TestLiveOverview reads the overview of a live cluster through App, the call the
-// page makes on every poll. It runs only when KUBEYARD_LIVE_CONTEXT names a
-// context in the kubeconfig, so CI can point it at a kind cluster.
-func TestLiveOverview(t *testing.T) {
+// TestLiveCatalog reads the catalog page of a live cluster through App, the call
+// the page makes on every refresh. It runs only when KUBEYARD_LIVE_CONTEXT names
+// a context in the kubeconfig, so CI can point it at a kind cluster. A cluster
+// without a catalog source is not an error: the view explains why.
+func TestLiveCatalog(t *testing.T) {
 	name := os.Getenv("KUBEYARD_LIVE_CONTEXT")
 	if name == "" {
 		t.Skip("KUBEYARD_LIVE_CONTEXT is not set")
 	}
-	ov, err := NewApp().Overview(name)
+	cat, err := NewApp().Catalog(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ov.NodesTotal < 1 || ov.NodesReady < 1 {
-		t.Errorf("overview = %+v, want at least one node and one of them ready", ov)
+	if cat.Error != "" {
+		t.Errorf("catalog error = %q, want none", cat.Error)
+	}
+	if !cat.FluxInstalled && cat.Note == "" {
+		t.Errorf("catalog = %+v, want a note when Flux is not installed", cat)
 	}
 }

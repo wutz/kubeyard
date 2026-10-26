@@ -20,7 +20,7 @@ catalog 仓库（Git）
        → cosign sign --key（私钥存 CI secret）
 ```
 
-签名使用 cosign 密钥对。Flux 对 keyless（OIDC）校验仍标为实验特性，待稳定后再提供 `matchOIDCIdentity` 选项。公钥随源一起下发为 Secret，OCIRepository 用 `verify.provider: cosign` + `verify.secretRef` 校验，成功后条件为 `SourceVerified=True`，GUI 在"源"页面展示该状态。
+签名使用 cosign 密钥对。Flux 对 keyless（OIDC）校验仍标为实验特性，待稳定后再提供 `matchOIDCIdentity` 选项。公钥随源一起下发为 Secret，OCIRepository 用 `verify.provider: cosign` + `verify.secretRef` 校验，成功后条件为 `SourceVerified=True`，GUI 在源面板展示该状态。
 
 ## 2. 仓库结构
 
@@ -28,16 +28,13 @@ catalog 仓库（Git）
 kubeyard-catalog/
 ├── catalog.yaml                 # 索引：源元数据 + 所有条目摘要（GUI 首先读这个）
 ├── profiles/
-│   ├── host.yaml                # 底层集群推荐组件集合
-│   └── vcluster.yaml            # 虚拟集群推荐组件集合
+│   └── host.yaml                # 集群推荐组件集合
 └── addons/
     ├── nfd/
     │   ├── addon.yaml           # 元数据：名称、分类、版本、依赖、适用范围
     │   ├── schema.json          # 参数 JSON Schema，GUI 据此渲染表单
     │   └── manifests/           # Flux 对象：HelmRepository / OCIRepository + HelmRelease + 附加 CR
     ├── gpu-operator/
-    ├── vcluster/                # 由 operator 引用，不在 GUI 列表里直接"安装"
-    ├── kubeyard-operator/       # 同一个 addon，scope 分 host 与 vcluster 两种模式
     └── ...
 ```
 
@@ -51,12 +48,12 @@ metadata:
 spec:
   displayName: NVIDIA GPU Operator
   category: ai                    # base | network | storage | ai | o11y | compute | security
-  scope: [host]                   # host | vcluster，决定在哪类集群显示
+  scope: [host]                   # 适用的集群类型，目前只有 host
   version: v25.10.1               # 上游 chart 版本
   dependsOn: [nfd]                # 映射为 Flux Kustomization.spec.dependsOn
   namespace: gpu-operator
   params: schema.json
-  health:                         # GUI 判断"已就绪"的依据
+  health:                         # GUI 判断"已安装"的依据
     - kind: HelmRelease
       name: gpu-operator
 ```
@@ -148,32 +145,28 @@ Flux 已安装且集群中没有 `kubeyard-system/catalog-default` 时，GUI 显
 
 已由 Kubeyard 安装的组件可以"更新参数"。表单以集群中存储的参数为初值（来自 `addon-<name>-params` 的 `values.yaml`，以及 Kustomization 的 `postBuild.substitute`），因此保存时不会把已安装的值重置为默认值。更新只重写这两处，之后由 Flux 协调。
 
-**已修复（v2026.10.4）：参数更新对 catalog 在 HelmRelease 中内联设置的键不生效。** Flux 中 `spec.values`（内联）优先于 `valuesFrom`，而线上 catalog 的 `manifests/release.yaml` 把 schema 暴露的键写在了 `spec.values` 里（如 nfd 的 `master.replicaCount: 2`），参数 ConfigMap 的修改因此被忽略。修复已在 catalog 本地分支验证：schema 暴露的键不再内联，参数由 ConfigMap 提供，nfd 在 k3d 上 2→1→3 随参数生效；`Render` 对表单留空的参数写入 schema 默认值，避免落到 chart 默认值上。`stable` 已指向 v2026.10.4。注意：升级后，早于 `Render` 修复安装的组件，若参数 ConfigMap 缺少某个键，会在下次协调时落到 chart 默认值。在这些组件上重新保存参数即可写入 schema 默认值。
+**已修复（v2026.10.4）：参数更新对 catalog 在 HelmRelease 中内联设置的键不生效。** Flux 中 `spec.values`（内联）优先于 `valuesFrom`，而早期的 catalog 把 schema 暴露的键写在了 `spec.values` 里（如 nfd 的 `master.replicaCount: 2`），参数 ConfigMap 的修改因此被忽略。修复后 schema 暴露的键不再内联，参数由 ConfigMap 提供；`Render` 对表单留空的参数写入 schema 默认值，避免落到 chart 默认值上。
+
+注意：早于该修复安装的组件，若参数 ConfigMap 缺少某个键，会在下次协调时落到 chart 默认值。在这些组件上重新保存参数即可写入 schema 默认值。
 
 版本升级不由 GUI 单独触发：OCIRepository 跟随 `stable` tag，新版本发布后 Flux 自动拉取。
 
 ### 安装 Flux
 
-Flux 本身用 [flux-operator](https://github.com/controlplaneio-fluxcd/flux-operator) 安装：GUI 通过 Helm SDK 从 `oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator` 安装 chart 0.61.0（release `flux-operator`，namespace `flux-system`，Helm 等待 operator 就绪），然后创建 `FluxInstance`（`flux-system/flux`，Flux 2.x，upstream-alpine，四个核心控制器）。只有在没有 Flux 控制器、没有 `flux-operator` release、也没有 FluxInstance 时才可用，不接管其他方式安装的 Flux。升级 Flux 只改这个 FluxInstance 的 `distribution.version`，不用 shell 调 `flux bootstrap`。v1 的 addon 仍用上面的 Kustomization + ConfigMap，只依赖 Flux 核心 API，作者门槛更低；若后续需要"同一 addon 按虚拟集群批量实例化"，再评估切换到 flux-operator 的 ResourceSet。具体版本在 M1 从各 releases 页面锁定。
+Flux 本身用 [flux-operator](https://github.com/controlplaneio-fluxcd/flux-operator) 安装：GUI 通过 Helm SDK 从 `oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator` 安装 chart 0.61.0（release `flux-operator`，namespace `flux-system`，Helm 等待 operator 就绪），然后创建 `FluxInstance`（`flux-system/flux`，Flux 2.x，upstream-alpine，四个核心控制器）。只有在没有 Flux 控制器、没有 `flux-operator` release、也没有 FluxInstance 时才可用，不接管其他方式安装的 Flux。升级 Flux 只改这个 FluxInstance 的 `distribution.version`，不用 shell 调 `flux bootstrap`。addon 用 Kustomization + ConfigMap，只依赖 Flux 核心 API，作者门槛更低。
 
 镜像仓库：catalog 中的镜像与 chart 地址保持上游原样。内网集群需要镜像覆盖（例如 k8s-in-action 现用的 `mir.blsc.cn`）时，在 GUI 的集群设置中配置，由安装时的 postBuild 变量注入，不写进 catalog 本身。
 
-## 4. 默认 catalog 内容（v1）
+## 4. 默认 catalog 内容
 
-| 分类 | host profile | vcluster profile |
-|---|---|---|
-| base | nfd, spegel, metrics-server | metrics-server |
-| network | metallb, cert-manager, istio | — |
-| ai | gpu-operator | kueue, trainer (v2), agent-sandbox, lws |
-| compute | vcluster（operator 内部使用）, kubeyard-operator (host 模式) | kubeyard-operator (vcluster 模式) |
-| o11y | victoria-metrics + dcgm 看板（可选，计量的利用率维度依赖它） | — |
+默认 catalog 的内容以 catalog 仓库的 `catalog.yaml` 与 `profiles/host.yaml` 为准。截至 v2026.10.5，catalog 包含的组件：
 
-上游安装方式（调研时版本，M1 重新锁定）：Kueue `oci://registry.k8s.io/kueue/charts/kueue`（v0.15.x）；Trainer v2 `oci://ghcr.io/kubeflow/charts/kubeflow-trainer`（2.1.0）；agent-sandbox 官方只发 release manifest（v0.4.x），catalog 中直接引用该清单。
+| 分类 | 组件 |
+|---|---|
+| base | nfd, spegel, metrics-server |
+| network | metallb, cert-manager, istio, gateway-api-crds |
+| ai | gpu-operator, forgeai, agent-sandbox |
 
-从 k8s-in-action 迁移：现有 64 个 `helmwave.yml` 的 release 定义（chart、版本、values、namespace）可以半自动转换为 HelmRelease；`lifecycle.post_up` 中的 `kubectl apply -k xxx` 转为同一 Kustomization 内的附加清单。k8s-in-action 保持为手册仓库，catalog 作为独立仓库发布。
+上游安装方式以各组件的 `manifests/` 为准。agent-sandbox 官方只发 release manifest，catalog 中直接引用该清单。
 
-## 5. 虚拟集群内的 Flux
-
-虚拟集群里安装 vcluster profile 时，GUI 先在虚拟集群内安装 Flux（与 host 相同方式），再走同样的安装模型。不复用 host 的 Flux：虚拟集群管理员只有该 VC 的权限，host Flux 对其不可见也不应可见。
-
-GPU 驱动、device plugin、RuntimeClass（agent-sandbox 依赖的 gVisor / Kata）属于节点能力，只在 host 安装，vcluster 同步进虚拟集群即可。
+从 k8s-in-action 迁移：现有 `helmwave.yml` 的 release 定义（chart、版本、values、namespace）可以半自动转换为 HelmRelease；`lifecycle.post_up` 中的 `kubectl apply -k xxx` 转为同一 Kustomization 内的附加清单。k8s-in-action 保持为手册仓库，catalog 作为独立仓库发布。

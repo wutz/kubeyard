@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/wutz/kubeyard/pkg/kube"
 )
@@ -44,31 +41,6 @@ func (a *App) Contexts() contextsView {
 		out.Contexts = append(out.Contexts, contextView{Name: c.Name, Current: c.Current})
 	}
 	return out
-}
-
-// Overview reads the nodes and pods of a context.
-func (a *App) Overview(contextName string) (overviewView, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
-	defer cancel()
-	ov, err := loadOverview(ctx, contextName)
-	if err != nil {
-		return overviewView{}, err
-	}
-	return toOverviewView(ov), nil
-}
-
-// Pools reads the resource pool page of a context.
-func (a *App) Pools(contextName string) (poolsView, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
-	defer cancel()
-	return loadPools(ctx, contextName)
-}
-
-// VirtualClusters reads the virtual cluster page of a context.
-func (a *App) VirtualClusters(contextName string) (virtualClustersView, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
-	defer cancel()
-	return loadVirtualClusters(ctx, contextName)
 }
 
 // Catalog reads the component catalog of a context and what its cluster runs.
@@ -113,112 +85,6 @@ func (a *App) UninstallAddon(contextName, name string) (string, error) {
 		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
 			return uninstallAddon(ctx, cfg, cs, dc, name)
 		})
-}
-
-// PinNode pins a node of a pool to the claim of a virtual cluster, so the
-// operator grants it to that cluster first (docs/gui.md §3, dragging a node onto
-// a virtual cluster). The rules are in checkPin.
-func (a *App) PinNode(contextName, vc, pool, node string) (string, error) {
-	return a.write(contextName, "固定节点", "已固定节点 "+node+" 到 "+vc+"，operator 下一轮分配后生效", actionTimeout,
-		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
-			return setPinned(ctx, cs, dc, vc, pool, node, true)
-		})
-}
-
-// UnpinNode removes a node from the pinned nodes of a virtual cluster's claim.
-// The node stays with the cluster until the operator releases it, like any other
-// node the claim holds.
-func (a *App) UnpinNode(contextName, vc, pool, node string) (string, error) {
-	return a.write(contextName, "解除固定", "已解除节点 "+node+" 的固定", actionTimeout,
-		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
-			return setPinned(ctx, cs, dc, vc, pool, node, false)
-		})
-}
-
-// saveFileDialog is the native save dialog. A variable, so the local harness can
-// pick the file without a window; the product always uses the dialog.
-var saveFileDialog = runtime.SaveFileDialog
-
-// ExportAdminKubeconfig saves the cluster-admin kubeconfig of a VirtualCluster
-// (docs/operator.md §4.1). confirm must repeat the VirtualCluster name. The user
-// picks the file in a save dialog first, so the credential is written to the
-// file and never returned to the page. The audit Event is written before the
-// file, so an export without a record is not possible. The result is the path
-// written, or "" when the user cancelled the dialog.
-func (a *App) ExportAdminKubeconfig(contextName, name, confirm string) (string, error) {
-	if contextName == "" {
-		return "", errors.New("缺少 context")
-	}
-	if confirm != name {
-		return "", fmt.Errorf("请输入虚拟集群名称 %s 以确认导出", name)
-	}
-	path, err := saveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "导出管理员 kubeconfig",
-		DefaultFilename: name + "-admin.kubeconfig",
-		Filters:         []runtime.FileFilter{{DisplayName: "kubeconfig", Pattern: "*.kubeconfig;*.yaml"}},
-	})
-	if err != nil {
-		return "", err
-	}
-	if path == "" {
-		return "", nil
-	}
-	_, cs, dc, err := clients(contextName)
-	if err != nil {
-		return "", err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
-	defer cancel()
-	data, err := kube.AdminKubeconfig(ctx, cs, dc, name)
-	if err != nil {
-		return "", err
-	}
-	actor := "GUI（context " + contextName + "）"
-	if err := kube.RecordAccess(ctx, cs, dc, name, kube.ExportedKubeconfig, "管理员 kubeconfig 已导出，操作来源："+actor); err != nil {
-		return "", err
-	}
-	// The file holds a cluster-admin credential, so only its owner may read it.
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
-// OpenVirtualClusterAdmin reads the nodes and pods of a VirtualCluster as its
-// cluster-admin (docs/gui.md §4). The audit Event is written before the
-// credential is read, so an open without a record is not possible. The
-// credential lives in memory for this call and is never returned: the page gets
-// the overview only. confirm must repeat the VirtualCluster name.
-func (a *App) OpenVirtualClusterAdmin(contextName, name, confirm string) (overviewView, error) {
-	if contextName == "" {
-		return overviewView{}, errors.New("缺少 context")
-	}
-	if confirm != name {
-		return overviewView{}, fmt.Errorf("请输入虚拟集群名称 %s 以确认", name)
-	}
-	_, cs, dc, err := clients(contextName)
-	if err != nil {
-		return overviewView{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
-	defer cancel()
-	actor := "GUI（context " + contextName + "，以管理员身份打开）"
-	if err := kube.RecordAccess(ctx, cs, dc, name, kube.OpenedAsAdmin, "管理员身份打开，操作来源："+actor); err != nil {
-		return overviewView{}, err
-	}
-	data, err := kube.AdminKubeconfig(ctx, cs, dc, name)
-	if err != nil {
-		return overviewView{}, err
-	}
-	_, acs, err := kube.AdminClient(data)
-	if err != nil {
-		return overviewView{}, err
-	}
-	ov, err := kube.Load(ctx, acs)
-	if err != nil {
-		return overviewView{}, fmt.Errorf("以 %s 管理员身份读取失败：%w", name, err)
-	}
-	return toOverviewView(ov), nil
 }
 
 // write runs fn against the context and answers with done. A failure is the

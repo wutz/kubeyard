@@ -1,5 +1,5 @@
-// Package kube reads kubeconfig contexts and summarizes clusters for the GUI.
-// It only reads from the API server; nothing here writes to a cluster.
+// Package kube reads kubeconfig contexts and installs Flux and catalog addons
+// into a cluster through the API server.
 package kube
 
 import (
@@ -7,7 +7,6 @@ import (
 	"sort"
 	"time"
 
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -50,15 +49,6 @@ func RESTConfig(contextName string) (*rest.Config, error) {
 	}
 	cfg.Timeout = 10 * time.Second
 	return cfg, nil
-}
-
-// Connect builds a clientset for the named context.
-func Connect(contextName string) (*kubernetes.Clientset, error) {
-	cfg, err := RESTConfig(contextName)
-	if err != nil {
-		return nil, err
-	}
-	return kubernetes.NewForConfig(cfg)
 }
 
 func loadingRules() *clientcmd.ClientConfigLoadingRules {

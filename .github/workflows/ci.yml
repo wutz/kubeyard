@@ -52,27 +52,15 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # The overview the window shows, read through App.Overview from a fake API
-      # server (cmd/fakeapiserver, not a cluster). The server must show its node
-      # as Ready. The Windows step below runs the same test inline.
-      - name: Overview against the fake cluster (Linux, macOS)
-        if: runner.os != 'Windows'
-        shell: bash
-        env:
-          KUBEYARD_LIVE_CONTEXT: fake
-        run: |
-          go build -o fake-apiserver ./cmd/fakeapiserver
-          .github/scripts/with-fake-cluster.sh ./fake-apiserver go test -run TestLiveOverview -v ./gui
-
-      # Starts the native window against the fake API server and saves a
-      # screenshot of the desktop while the window is open. The binary needs the
-      # production tag: without it, Wails exits at start-up.
+      # Starts the native window and saves a screenshot of the desktop while the
+      # window is open. The binary needs the production tag: without it, Wails
+      # exits at start-up. There is no cluster here, so the page shows the empty
+      # state of the contexts list; the catalog runs in the gui-live-cluster job.
       - name: GUI window launches (Linux)
         if: runner.os == 'Linux'
         run: |
           go build -tags production -o kubeyard-gui ./gui
-          go build -o fake-apiserver ./cmd/fakeapiserver
-          xvfb-run -a .github/scripts/with-fake-cluster.sh ./fake-apiserver .github/scripts/gui-smoke.sh ./kubeyard-gui "import -window root gui-linux.png"
+          xvfb-run -a .github/scripts/gui-smoke.sh ./kubeyard-gui "import -window root gui-linux.png"
 
       # Plain go build leaves UniformTypeIdentifiers unlinked; wails build adds it.
       - name: GUI window launches (macOS)
@@ -82,46 +70,13 @@ jobs:
           CGO_LDFLAGS: "-framework UniformTypeIdentifiers"
         run: |
           go build -tags production -o kubeyard-gui ./gui
-          go build -o fake-apiserver ./cmd/fakeapiserver
-          .github/scripts/with-fake-cluster.sh ./fake-apiserver .github/scripts/gui-smoke.sh ./kubeyard-gui "screencapture -x gui-macos.png"
+          .github/scripts/gui-smoke.sh ./kubeyard-gui "screencapture -x gui-macos.png"
 
-      # The Windows runners have no jq and no bash helper, so this step does the
-      # same in PowerShell: start the fake server, point KUBECONFIG at it, run the
-      # overview test, then start the window and capture the desktop.
       - name: GUI window launches (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           go build -tags production -o kubeyard-gui.exe ./gui
-          go build -o fake-apiserver.exe ./cmd/fakeapiserver
-          $fake = Start-Process -FilePath ./fake-apiserver.exe -ArgumentList '-addr', '127.0.0.1:7792' -PassThru -RedirectStandardError fake-apiserver.log
-          $ready = $false
-          for ($i = 0; $i -lt 30 -and -not $ready; $i++) {
-            try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7792/api/v1/nodes | Out-Null; $ready = $true } catch { Start-Sleep -Seconds 1 }
-          }
-          if (-not $ready) { Get-Content fake-apiserver.log; exit 1 }
-          $kubeconfig = Join-Path $PWD 'fake-kubeconfig'
-          Set-Content -Path $kubeconfig -Encoding utf8 -Value @'
-          apiVersion: v1
-          kind: Config
-          clusters:
-          - name: fake
-            cluster:
-              server: http://127.0.0.1:7792
-          users:
-          - name: fake
-            user: {}
-          contexts:
-          - name: fake
-            context:
-              cluster: fake
-              user: fake
-          current-context: fake
-          '@
-          $env:KUBECONFIG = $kubeconfig
-          $env:KUBEYARD_LIVE_CONTEXT = 'fake'
-          go test -run TestLiveOverview -v ./gui
-          if ($LASTEXITCODE -ne 0) { exit 1 }
           $p = Start-Process -FilePath ./kubeyard-gui.exe -PassThru -RedirectStandardError gui.err
           Start-Sleep -Seconds 8
           if ($p.HasExited) { Get-Content gui.err; exit 1 }
@@ -131,7 +86,6 @@ jobs:
           [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
           $bmp.Save("$PWD/gui-windows.png", [System.Drawing.Imaging.ImageFormat]::Png)
           Stop-Process -Id $p.Id
-          Stop-Process -Id $fake.Id
 
       - name: Upload GUI screenshot
         if: always()
@@ -142,11 +96,11 @@ jobs:
             gui-*.png
             gui.log
             gui.err
-            fake-apiserver.log
           if-no-files-found: ignore
 
-  # The window against a live cluster: the overview must show the kind node, not
-  # just the empty state. The screenshot is uploaded for inspection.
+  # The catalog page against a live cluster: TestLiveCatalog reads the catalog of
+  # the kind context, which has no Flux yet, so the view must explain that with a
+  # note rather than an error. The window is then launched and captured.
   gui-live-cluster:
     name: GUI with a live cluster (ubuntu-22.04)
     runs-on: ubuntu-22.04
@@ -172,9 +126,9 @@ jobs:
           cluster_name: kubeyard
           wait: 120s
 
-      - name: Check the overview and launch the window
+      - name: Check the catalog and launch the window
         run: |
-          KUBEYARD_LIVE_CONTEXT=kind-kubeyard go test -run TestLiveOverview -v ./gui
+          KUBEYARD_LIVE_CONTEXT=kind-kubeyard go test -run TestLiveCatalog -v ./gui
           go build -tags production -o kubeyard-gui ./gui
           xvfb-run -a .github/scripts/gui-smoke.sh ./kubeyard-gui "import -window root gui-kind.png"
 
