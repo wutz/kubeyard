@@ -235,4 +235,7 @@ type NodeLeaseStatus struct {
 	Phase         LeasePhase   `json:"phase,omitempty"`
 	BoundAt       *metav1.Time `json:"boundAt,omitempty"`
 	DrainDeadline *metav1.Time `json:"drainDeadline,omitempty"`
+	// IdleSince is when the node was first seen with no workload of its
+	// VirtualCluster, while that VirtualCluster autoscales. Set only while idle.
+	IdleSince *metav1.Time `json:"idleSince,omitempty"`
 }

@@ -65,3 +65,6 @@ spec:
                 drainDeadline:
                   type: string
                   format: date-time
+                idleSince:
+                  type: string
+                  format: date-time
