@@ -108,7 +108,7 @@ func run(args []string) error {
 		// GetWebhookServer, so ask once; without it the server never starts.
 		mgr.GetWebhookServer()
 	}
-	r := &host.Reconciler{Client: mgr.GetClient()}
+	r := &host.Reconciler{Client: mgr.GetClient(), Live: mgr.GetAPIReader()}
 	if err := r.SetupWithManager(mgr); err != nil {
 		return err
 	}

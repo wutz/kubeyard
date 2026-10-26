@@ -69,6 +69,39 @@ func reconcileAt(t *testing.T, c client.Client, now time.Time) ctrl.Result {
 	return res
 }
 
+// The informer cache can still list a lease that finishDrain already deleted. A
+// pass that trusted the cache would taint the free node again, and nothing would
+// remove the taint afterwards, so the live read decides.
+func TestDrainIgnoresLeaseAlreadyDeletedInAPI(t *testing.T) {
+	stale := newLease("n1", "auto")
+	stale.Status.Phase = v1alpha1.LeaseDraining
+	var nodeWritten bool
+	cached := newDrainClient(t, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if _, ok := obj.(*corev1.Node); ok {
+				nodeWritten = true
+			}
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	},
+		drainPool(),
+		newNode("n1", true, map[string]string{"class": "gpu"}),
+		stale,
+	)
+	live := newDrainClient(t, interceptor.Funcs{},
+		drainPool(),
+		newNode("n1", true, map[string]string{"class": "gpu"}),
+	)
+
+	r := &Reconciler{Client: cached, Live: live, Now: func() time.Time { return t0 }}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "gpu"}}); err != nil {
+		t.Fatal(err)
+	}
+	if nodeWritten {
+		t.Fatal("a node was written for a lease the API server no longer has")
+	}
+}
+
 func hasDrainingTaint(n corev1.Node) bool {
 	for _, taint := range n.Spec.Taints {
 		if taint.Key == DrainingKey {
