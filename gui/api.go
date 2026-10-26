@@ -93,7 +93,7 @@ func (a *App) AddCatalogSource(contextName string) (string, error) {
 
 // InstallAddon installs an addon from the catalog with the form's fields.
 func (a *App) InstallAddon(contextName, name string, fields map[string]any) (string, error) {
-	return a.write(contextName, "安装", "已提交安装，Flux 正在协调，状态会在刷新后更新", actionTimeout,
+	return a.write(contextName, "安装", "已提交安装，Flux 协调完成后状态会更新", actionTimeout,
 		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
 			return installAddon(ctx, cfg, cs, dc, name, fields)
 		})
@@ -101,7 +101,7 @@ func (a *App) InstallAddon(contextName, name string, fields map[string]any) (str
 
 // UpdateAddon rewrites the parameters of an addon Kubeyard installed.
 func (a *App) UpdateAddon(contextName, name string, fields map[string]any) (string, error) {
-	return a.write(contextName, "更新参数", "已写入参数，状态会在刷新后更新", actionTimeout,
+	return a.write(contextName, "更新参数", "已写入参数，Flux 协调完成后状态会更新", actionTimeout,
 		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
 			return updateAddon(ctx, cfg, cs, dc, name, fields)
 		})
