@@ -53,6 +53,13 @@ let catalogSeq = 0;
 let poolsSeq = 0;
 let clustersSeq = 0;
 
+// After an addon write, Flux reconciles the change in the background. The page
+// re-reads the catalog every ADDON_FOLLOW_STEP_MS until the addon settles, and
+// gives up after ADDON_FOLLOW_MS.
+const ADDON_FOLLOW_STEP_MS = 3000;
+const ADDON_FOLLOW_MS = 2 * 60 * 1000;
+let addonFollowTimer = 0;
+
 const STATUS_LABEL = {
   installed: ['已安装', 'ok'],
   existing: ['已存在（非 Helm）', ''],
@@ -201,8 +208,8 @@ async function refreshClusters() {
 // write calls a cluster write method of App for the selected context, with the
 // arguments after the context. A successful write clears the install form, so
 // the form starts again from what the cluster now runs. A failed one keeps what
-// the user typed.
-async function write(method, scope, args = []) {
+// the user typed. An addon write passes settled, see followAddon.
+async function write(method, scope, args = [], settled = null) {
   const context = state.selected;
   state.busy = true;
   state.confirm = '';
@@ -225,11 +232,36 @@ async function write(method, scope, args = []) {
   // catalog the page holds, and until the read ends that one predates the write.
   if (ok) state.form = null;
   renderContent();
+  if (ok && settled) followAddon(args[0], settled);
 }
+
+// followAddon re-reads the catalog until the addon's status settles, so the page
+// shows what Flux did without a manual refresh. settled takes the status and says
+// whether it is the one the write aims for. It stops early when the page moves
+// to another context.
+function followAddon(name, settled) {
+  const context = state.selected;
+  const deadline = Date.now() + ADDON_FOLLOW_MS;
+  clearTimeout(addonFollowTimer);
+  const step = async () => {
+    await refreshCatalog();
+    if (state.selected !== context) return;
+    const ad = list(state.catalog?.addons).find((a) => a.name === name);
+    if (!ad || settled(ad.status) || Date.now() >= deadline) return;
+    addonFollowTimer = setTimeout(step, ADDON_FOLLOW_STEP_MS);
+  };
+  addonFollowTimer = setTimeout(step, ADDON_FOLLOW_STEP_MS);
+}
+
+// The status an addon write aims for. Uninstall is done once the addon is no
+// longer installed; it may stop at existing while Flux removes the rest.
+const settledInstalled = (status) => status === 'installed';
+const settledRemoved = (status) => status !== 'installed';
 
 // --- navigation and selection ------------------------------------------------
 
 function selectContext(name) {
+  clearTimeout(addonFollowTimer);
   state.selected = name;
   state.overview = null;
   state.overviewError = '';
@@ -1206,17 +1238,17 @@ function actionRow(ad) {
       confirmButton('install', '安装', '确认安装', {
         cls: 'btn btn-primary',
         disabled: Boolean(ad.installBlocked),
-        run: () => write('InstallAddon', 'addon', [ad.name, fieldsOf()]),
+        run: () => write('InstallAddon', 'addon', [ad.name, fieldsOf()], settledInstalled),
       }),
       ad.managed
         ? confirmButton('update', '更新参数', '确认更新', {
-            run: () => write('UpdateAddon', 'addon', [ad.name, fieldsOf()]),
+            run: () => write('UpdateAddon', 'addon', [ad.name, fieldsOf()], settledInstalled),
           })
         : null,
       confirmButton('uninstall', '卸载', '确认卸载', {
         confirmCls: 'btn btn-danger',
         disabled: Boolean(ad.uninstallBlocked),
-        run: () => write('UninstallAddon', 'addon', [ad.name]),
+        run: () => write('UninstallAddon', 'addon', [ad.name], settledRemoved),
       }),
       cancelButton(),
       state.busy ? el('span', { class: 'muted small' }, '正在提交到集群…') : null,
