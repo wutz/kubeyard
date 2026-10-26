@@ -88,7 +88,7 @@ button, select, input { font: inherit; color: inherit; }
 
 #app {
   display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr);
   height: 100vh;
 }
 
@@ -117,10 +117,8 @@ button, select, input { font: inherit; color: inherit; }
 
 .cluster-picker {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px 12px;
+  gap: 4px;
+  padding: 0 0 12px;
 }
 
 .cluster-picker .status { padding: 0 8px 12px; }

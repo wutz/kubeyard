@@ -475,6 +475,7 @@ function clusterPicker() {
       {
         class: 'select',
         'aria-label': '集群',
+        title: state.selected,
         onchange: (e) => selectContext(e.target.value),
       },
       state.contexts.map((c) =>
