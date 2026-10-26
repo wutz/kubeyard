@@ -9,15 +9,34 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/wutz/kubeyard/pkg/api/v1alpha1"
 )
 
-// ExportedKubeconfig is the Event reason written when an admin kubeconfig is
-// read through the GUI. docs/operator.md §4.1 requires an audit record for it.
-const ExportedKubeconfig = "AdminKubeconfigExported"
+// The Event reasons written when an admin kubeconfig is read through the GUI.
+// docs/operator.md §4.1 requires an audit record for each of them.
+const (
+	ExportedKubeconfig = "AdminKubeconfigExported"
+	OpenedAsAdmin      = "AdminKubeconfigOpened"
+)
 
 var virtualClusters = v1alpha1.SchemeGroupVersion.WithResource("virtualclusters")
+
+// AdminClient builds a client from an admin kubeconfig held in memory. Nothing
+// is written to disk; the caller keeps the client only for the call it serves.
+func AdminClient(kubeconfig []byte) (*rest.Config, kubernetes.Interface, error) {
+	cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("解析管理员 kubeconfig：%w", err)
+	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("创建管理员客户端：%w", err)
+	}
+	return cfg, cs, nil
+}
 
 // AdminKubeconfig returns the cluster-admin kubeconfig of a VirtualCluster. The
 // bytes come from the Secret that VirtualCluster.status.adminKubeconfigSecretRef
@@ -57,11 +76,12 @@ func adminSecretRef(ctx context.Context, dc dynamic.Interface, vcName string) (v
 	return *ref, nil
 }
 
-// RecordExport writes the audit Event for an export. VirtualCluster is cluster-scoped,
-// so the Event lives in "default" with an empty involvedObject namespace, which is how
-// Kubernetes records events for cluster-scoped objects. The caller must not return
-// the kubeconfig if this fails.
-func RecordExport(ctx context.Context, cs kubernetes.Interface, dc dynamic.Interface, vcName, actor string) error {
+// RecordAccess writes the audit Event for a read of the admin kubeconfig: reason
+// says which kind of read (ExportedKubeconfig or OpenedAsAdmin), message says who
+// asked. VirtualCluster is cluster-scoped, so the Event lives in "default" with
+// an empty involvedObject namespace, which is how Kubernetes records events for
+// cluster-scoped objects. The caller must not use the kubeconfig if this fails.
+func RecordAccess(ctx context.Context, cs kubernetes.Interface, dc dynamic.Interface, vcName, reason, message string) error {
 	if _, err := adminSecretRef(ctx, dc, vcName); err != nil {
 		return err
 	}
@@ -76,8 +96,8 @@ func RecordExport(ctx context.Context, cs kubernetes.Interface, dc dynamic.Inter
 			Kind:       "VirtualCluster",
 			Name:       vcName,
 		},
-		Reason:         ExportedKubeconfig,
-		Message:        fmt.Sprintf("管理员 kubeconfig 已导出，操作来源：%s", actor),
+		Reason:         reason,
+		Message:        message,
 		Type:           corev1.EventTypeNormal,
 		FirstTimestamp: now,
 		LastTimestamp:  now,

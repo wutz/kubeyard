@@ -174,7 +174,7 @@ func (a *App) ExportAdminKubeconfig(contextName, name, confirm string) (string, 
 		return "", err
 	}
 	actor := "GUI（context " + contextName + "）"
-	if err := kube.RecordExport(ctx, cs, dc, name, actor); err != nil {
+	if err := kube.RecordAccess(ctx, cs, dc, name, kube.ExportedKubeconfig, "管理员 kubeconfig 已导出，操作来源："+actor); err != nil {
 		return "", err
 	}
 	// The file holds a cluster-admin credential, so only its owner may read it.
@@ -182,6 +182,43 @@ func (a *App) ExportAdminKubeconfig(contextName, name, confirm string) (string, 
 		return "", err
 	}
 	return path, nil
+}
+
+// OpenVirtualClusterAdmin reads the nodes and pods of a VirtualCluster as its
+// cluster-admin (docs/gui.md §4). The audit Event is written before the
+// credential is read, so an open without a record is not possible. The
+// credential lives in memory for this call and is never returned: the page gets
+// the overview only. confirm must repeat the VirtualCluster name.
+func (a *App) OpenVirtualClusterAdmin(contextName, name, confirm string) (overviewView, error) {
+	if contextName == "" {
+		return overviewView{}, errors.New("缺少 context")
+	}
+	if confirm != name {
+		return overviewView{}, fmt.Errorf("请输入虚拟集群名称 %s 以确认", name)
+	}
+	_, cs, dc, err := clients(contextName)
+	if err != nil {
+		return overviewView{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	defer cancel()
+	actor := "GUI（context " + contextName + "，以管理员身份打开）"
+	if err := kube.RecordAccess(ctx, cs, dc, name, kube.OpenedAsAdmin, "管理员身份打开，操作来源："+actor); err != nil {
+		return overviewView{}, err
+	}
+	data, err := kube.AdminKubeconfig(ctx, cs, dc, name)
+	if err != nil {
+		return overviewView{}, err
+	}
+	_, acs, err := kube.AdminClient(data)
+	if err != nil {
+		return overviewView{}, err
+	}
+	ov, err := kube.Load(ctx, acs)
+	if err != nil {
+		return overviewView{}, fmt.Errorf("以 %s 管理员身份读取失败：%w", name, err)
+	}
+	return toOverviewView(ov), nil
 }
 
 // write runs fn against the context and answers with done. A failure is the

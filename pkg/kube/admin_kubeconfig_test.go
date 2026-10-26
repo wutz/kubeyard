@@ -105,12 +105,12 @@ func TestAdminKubeconfigUnknownVirtualCluster(t *testing.T) {
 	}
 }
 
-func TestRecordExportWritesClusterScopedEvent(t *testing.T) {
+func TestRecordAccessWritesClusterScopedEvent(t *testing.T) {
 	ref := &v1alpha1.SecretReference{Namespace: "vc-acme", Name: "vc-acme-admin", Key: "config"}
 	cs := fake.NewSimpleClientset()
 	dc := fakeDynamic(t, vcObject(t, "acme", ref))
 
-	if err := RecordExport(context.Background(), cs, dc, "acme", "alice"); err != nil {
+	if err := RecordAccess(context.Background(), cs, dc, "acme", ExportedKubeconfig, "管理员 kubeconfig 已导出，操作来源：alice"); err != nil {
 		t.Fatal(err)
 	}
 	events, err := cs.CoreV1().Events(metav1.NamespaceDefault).List(context.Background(), metav1.ListOptions{})
@@ -129,11 +129,11 @@ func TestRecordExportWritesClusterScopedEvent(t *testing.T) {
 	}
 }
 
-func TestRecordExportFailsWithoutSecretRef(t *testing.T) {
+func TestRecordAccessFailsWithoutSecretRef(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	dc := fakeDynamic(t, vcObject(t, "acme", nil))
 
-	if err := RecordExport(context.Background(), cs, dc, "acme", "alice"); err == nil {
+	if err := RecordAccess(context.Background(), cs, dc, "acme", ExportedKubeconfig, "管理员 kubeconfig 已导出，操作来源：alice"); err == nil {
 		t.Fatal("want an error: no namespace to record the audit Event in")
 	}
 }

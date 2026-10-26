@@ -31,6 +31,9 @@ const state = {
   clustersAt: null,
   // selectedCluster names the virtual cluster whose detail is open.
   selectedCluster: '',
+  // adminView is the overview read through a cluster's admin credential, shown
+  // until the page, the context or the cluster changes.
+  adminView: null,
   selectedAddon: '',
   // form holds the install form of one addon: its path-keyed fields.
   form: null,
@@ -281,6 +284,7 @@ function selectContext(name) {
   state.clustersLoading = false;
   state.clustersAt = null;
   state.selectedCluster = '';
+  state.adminView = null;
   state.selectedAddon = '';
   state.form = null;
   state.confirm = '';
@@ -295,6 +299,7 @@ function selectContext(name) {
 
 function setPage(page) {
   state.page = page;
+  state.adminView = null;
   state.confirm = '';
   state.notice = '';
   state.actionError = '';
@@ -308,6 +313,7 @@ function setPage(page) {
 // same one is clicked again.
 function selectCluster(name) {
   state.selectedCluster = state.selectedCluster === name ? '' : name;
+  state.adminView = null;
   state.confirm = '';
   state.notice = '';
   state.actionError = '';
@@ -875,6 +881,24 @@ function clusterDetail(c) {
           cancelButton(),
         )
       : null,
+    el('h3', { class: 'section-title' }, '以管理员身份打开'),
+    el(
+      'span',
+      { class: 'muted small' },
+      '以该集群的 cluster-admin 身份读取它的节点与 Pod。凭证只用于这一次读取，不返回页面；每次打开都会写入审计 Event。',
+    ),
+    c.adminKubeconfig
+      ? el(
+          'div',
+          { class: 'actions' },
+          confirmButton(`open:${c.name}`, '以管理员身份打开', `确认以 ${c.name} 管理员身份打开`, {
+            confirmCls: 'btn btn-danger',
+            run: () => openAsAdmin(c.name),
+          }),
+          state.adminView && state.adminView.vc === c.name ? el('button', { class: 'btn', onclick: closeAdminView }, '关闭') : null,
+        )
+      : null,
+    state.adminView && state.adminView.vc === c.name ? adminOverview(c.name, state.adminView.overview) : null,
     messages('cluster'),
   );
 }
@@ -926,6 +950,50 @@ async function exportAdminKubeconfig(name) {
     state.busy = false;
     renderContent();
   }
+}
+
+// openAsAdmin reads the nodes and pods of a virtual cluster through its admin
+// credential. The app does the read and the audit, so the page gets the overview
+// only.
+async function openAsAdmin(name) {
+  state.busy = true;
+  state.confirm = '';
+  state.notice = '';
+  state.actionError = '';
+  state.actionScope = 'cluster';
+  state.adminView = null;
+  renderContent();
+  try {
+    const overview = await call('OpenVirtualClusterAdmin', state.selected, name, name);
+    state.adminView = { vc: name, overview };
+  } catch (err) {
+    state.actionError = err.message;
+  } finally {
+    state.busy = false;
+    renderContent();
+  }
+}
+
+function closeAdminView() {
+  state.adminView = null;
+  renderContent();
+}
+
+// adminOverview shows what the admin read says, with a warning that it was read
+// as the cluster's admin.
+function adminOverview(name, ov) {
+  return el(
+    'div',
+    { class: 'stack' },
+    el('div', { class: 'alert warning', role: 'status' }, `正在以 ${name} 的 cluster-admin 身份查看。关闭或切换后收起。`),
+    el(
+      'div',
+      { class: 'cards' },
+      metricCard('节点就绪', `${ov.nodesReady} / ${ov.nodesTotal}`, 'Ready 的节点数'),
+      metricCard('Pod 运行中', ov.podsRunning, `Pending ${ov.podsPending} · 失败 ${ov.podsFailed}`),
+    ),
+    nodeTable(list(ov.nodes)),
+  );
 }
 
 // --- resource pools ----------------------------------------------------------
