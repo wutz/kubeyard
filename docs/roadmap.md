@@ -86,7 +86,9 @@
   - [x] 资源池页（`GET /api/pools`）：每个池的 total / free / reserved / unhealthy 与该池上的 VC 声明，池与声明按名称排序；未安装 operator 时说明原因。
   - [x] 虚拟集群页（`GET /api/virtualclusters`，[#26](https://github.com/wutz/kubeyard/pull/26)）：列表按优先级从高到低；卡片显示持有节点数、阶段、优先级 / 是否可抢占、每个池声明的 min/max/desired；点开详情显示 provider、版本、对外地址（Ingress 带 7443）、节点分配表、条件，以及导出管理员 kubeconfig 的两步确认。阶段文案映射 Pending/Provisioning/Ready/Degraded/Draining/Deleting → 等待/创建中/就绪/降级/回收中/删除中。JSON 字段由测试逐个断言，空列表输出 `[]` 而不是 `null`。
   - 2026-10-25 浏览器实测（k3d context，深色与浅色两套主题）：4 个 VC 按优先级 10 → 5 → 3 → 1 排列，vc-demo 卡片点开详情，对外地址显示 `Ingress · vc-demo.example.com:7443`，未分配节点时表格显示"还没有分配节点"；导出按钮先变成"确认导出 vc-demo 的管理员 kubeconfig"，确认后出现成功提示与 kubeconfig 内容，"下载文件"生成 `application/yaml` 的 64 字节 blob；切换 context 后已导出的内容被清空。只读的 bz1-dev1（不写任何东西）上页面显示"未安装 Kubeyard operator"空状态。
-  - 未完成：节点拖拽分配；页面没有"以该 VC 管理员身份打开"（M5）；窄屏下侧边栏不折叠（375px 视口出现横向滚动），随 GUI 整体响应式一起处理。
+  - [x] 节点拖拽分配（`gui/pinning.go`，[#50](https://github.com/wutz/kubeyard/pull/50)）：资源池页把节点拖到 VC 的声明即固定（写 pinnedNodes），拖到"解除固定"区即解除。写入前按 webhook 的规则检查，并拒绝会让 allocator 停转的情形：节点仍被其它 VC 占用或已固定给其它 VC、节点未就绪、不匹配选择器、超过 max。单元测试覆盖 `checkPin` / `checkUnpin` 与池的节点视图。
+  - 2026-10-26 本地 k3d 实测（真实 API，operator 宿主机运行，GUI 经 headless 服务与浏览器）：拖到 low 后 pinnedNodes 写入，operator 在 37 秒内把节点租给 low（Bound）；拖到 high 被拒（"已固定给虚拟集群 low"）；节点仍被 high 占用时拖到 low 被拒（"仍由虚拟集群 high 占用，等它释放后再固定"）；不存在的节点被拒；拖到解除区后 pinnedNodes 清空，租约进入 Draining。operator 日志无错误。
+  - 未完成：页面没有"以该 VC 管理员身份打开"（M5）；窄屏下侧边栏不折叠（375px 视口出现横向滚动），随 GUI 整体响应式一起处理。
 
 ## M3 弹性与抢占
 

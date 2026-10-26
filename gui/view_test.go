@@ -123,7 +123,7 @@ func TestToPoolsViewCountsAndClaims(t *testing.T) {
 		testVC("acme", "ACME 生产", v1alpha1.PoolClaim{Pool: "rtx-5090-x8", Min: 2, Max: 8, Desired: 4}, v1alpha1.PoolClaim{Pool: "missing", Min: 1, Max: 1}),
 	}
 
-	got := toPoolsView(true, pools, vcs)
+	got := toPoolsView(true, pools, vcs, nil, nil)
 	if !got.Installed {
 		t.Fatalf("Installed = false, want true")
 	}
@@ -155,7 +155,7 @@ func TestToPoolsViewCountsAndClaims(t *testing.T) {
 }
 
 func TestToPoolsViewEmpty(t *testing.T) {
-	got := toPoolsView(true, nil, nil)
+	got := toPoolsView(true, nil, nil, nil, nil)
 	if !got.Installed {
 		t.Errorf("Installed = false, want true when the CRD is served")
 	}
@@ -167,7 +167,7 @@ func TestToPoolsViewEmpty(t *testing.T) {
 func TestToPoolsViewNotInstalled(t *testing.T) {
 	// Objects that might be left over are ignored when the CRD is not served.
 	pools := []v1alpha1.NodePool{testPool("rtx-5090-x8", "", 1, 1, 0, 0)}
-	got := toPoolsView(false, pools, nil)
+	got := toPoolsView(false, pools, nil, nil, nil)
 	if got.Installed {
 		t.Errorf("Installed = true, want false")
 	}

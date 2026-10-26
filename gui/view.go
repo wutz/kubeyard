@@ -5,6 +5,10 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+
 	"github.com/wutz/kubeyard/pkg/api/v1alpha1"
 	"github.com/wutz/kubeyard/pkg/catalog"
 	"github.com/wutz/kubeyard/pkg/kube"
@@ -76,16 +80,29 @@ type poolsView struct {
 	Pools     []poolView `json:"pools"`
 }
 
-// poolView is one NodePool: the counts its status reports, and the virtual
-// clusters that claim it. Pools and claims are sorted by name.
+// poolView is one NodePool: the counts its status reports, the virtual clusters
+// that claim it, and the nodes its selector matches. Pools and claims are sorted
+// by name; nodes by name too.
 type poolView struct {
-	Name        string      `json:"name"`
-	DisplayName string      `json:"displayName"`
-	Total       int32       `json:"total"`
-	Free        int32       `json:"free"`
-	Reserved    int32       `json:"reserved"`
-	Unhealthy   int32       `json:"unhealthy"`
-	Claims      []claimView `json:"claims"`
+	Name        string         `json:"name"`
+	DisplayName string         `json:"displayName"`
+	Total       int32          `json:"total"`
+	Free        int32          `json:"free"`
+	Reserved    int32          `json:"reserved"`
+	Unhealthy   int32          `json:"unhealthy"`
+	Claims      []claimView    `json:"claims"`
+	Nodes       []poolNodeView `json:"nodes"`
+}
+
+// poolNodeView is one node of a pool. Holder is the virtual cluster the node is
+// bound to, and PinnedTo the one whose claim pins it; both are empty when none.
+// Draining reports a node the operator is emptying before it is handed over.
+type poolNodeView struct {
+	Name     string `json:"name"`
+	Ready    bool   `json:"ready"`
+	Holder   string `json:"holder"`
+	Draining bool   `json:"draining"`
+	PinnedTo string `json:"pinnedTo"`
 }
 
 // claimView is one virtual cluster's claim on a pool.
@@ -97,9 +114,10 @@ type claimView struct {
 	Desired        int32  `json:"desired"`
 }
 
-// toPoolsView builds the resource pool page from the NodePools and the
-// VirtualClusters of a cluster. Claims on a pool that is not listed are dropped.
-func toPoolsView(installed bool, pools []v1alpha1.NodePool, vcs []v1alpha1.VirtualCluster) poolsView {
+// toPoolsView builds the resource pool page from the NodePools, the
+// VirtualClusters, the nodes and the NodeLeases of a cluster. Claims on a pool
+// that is not listed are dropped.
+func toPoolsView(installed bool, pools []v1alpha1.NodePool, vcs []v1alpha1.VirtualCluster, nodes []corev1.Node, leases []v1alpha1.NodeLease) poolsView {
 	out := poolsView{Installed: installed, Pools: []poolView{}}
 	if !installed {
 		return out
@@ -115,6 +133,7 @@ func toPoolsView(installed bool, pools []v1alpha1.NodePool, vcs []v1alpha1.Virtu
 			Reserved:    p.Status.Reserved,
 			Unhealthy:   p.Status.Unhealthy,
 			Claims:      []claimView{},
+			Nodes:       []poolNodeView{},
 		})
 	}
 	for _, vc := range vcs {
@@ -132,11 +151,52 @@ func toPoolsView(installed bool, pools []v1alpha1.NodePool, vcs []v1alpha1.Virtu
 			})
 		}
 	}
+	for _, p := range pools {
+		out.Pools[index[p.Name]].Nodes = poolNodes(p, vcs, nodes, leases)
+	}
 	sort.Slice(out.Pools, func(i, j int) bool { return out.Pools[i].Name < out.Pools[j].Name })
 	for i := range out.Pools {
 		claims := out.Pools[i].Claims
 		sort.Slice(claims, func(a, b int) bool { return claims[a].VirtualCluster < claims[b].VirtualCluster })
 	}
+	return out
+}
+
+// poolNodes lists the nodes the pool's selector matches, with the holder and the
+// pin of each. A selector that does not parse matches nothing.
+func poolNodes(np v1alpha1.NodePool, vcs []v1alpha1.VirtualCluster, nodes []corev1.Node, leases []v1alpha1.NodeLease) []poolNodeView {
+	out := []poolNodeView{}
+	sel, err := metav1.LabelSelectorAsSelector(&np.Spec.NodeSelector)
+	if err != nil {
+		return out
+	}
+	holder := map[string]v1alpha1.NodeLease{}
+	for _, l := range leases {
+		if l.Spec.Pool == np.Name && l.Status.Phase != v1alpha1.LeaseReleased {
+			holder[l.Spec.Node] = l
+		}
+	}
+	pinned := map[string]string{}
+	for i := range vcs {
+		if c := claimOf(&vcs[i], np.Name); c != nil {
+			for _, n := range c.PinnedNodes {
+				pinned[n] = vcs[i].Name
+			}
+		}
+	}
+	for i := range nodes {
+		n := &nodes[i]
+		if !sel.Matches(labels.Set(n.Labels)) {
+			continue
+		}
+		v := poolNodeView{Name: n.Name, Ready: nodeReady(n), PinnedTo: pinned[n.Name]}
+		if l, ok := holder[n.Name]; ok {
+			v.Holder = l.Spec.VirtualCluster
+			v.Draining = l.Status.Phase == v1alpha1.LeaseDraining
+		}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
 	return out
 }
 

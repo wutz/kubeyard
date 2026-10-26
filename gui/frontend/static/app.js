@@ -227,7 +227,8 @@ async function write(method, scope, args = [], settled = null) {
     state.busy = false;
   }
   renderContent();
-  await Promise.all([refreshOverview(), refreshCatalog()]);
+  // A pin changes the pool and the cluster pages, so both are read again too.
+  await Promise.all([refreshOverview(), refreshCatalog(), refreshPools(), refreshClusters()]);
   // Cleared only after the catalog is read again: the form is built from the
   // catalog the page holds, and until the read ends that one predates the write.
   if (ok) state.form = null;
@@ -971,13 +972,20 @@ function poolsPage() {
     'div',
     { class: 'stack' },
     head,
+    messages('pools'),
     el('div', { class: 'pool-grid' }, pools.map(poolCard)),
   );
 }
 
+// dragging is the node being dragged on the resource pool page: its name, its
+// pool, and the virtual cluster it is pinned to, if any. dragover cannot read the
+// drag data, so the page keeps it here. It is cleared when a drop or drag ends.
+let dragging = null;
+
 function poolCard(p) {
   const reservedPercent = p.total > 0 ? Math.min(100, (p.reserved / p.total) * 100) : 0;
   const claims = list(p.claims);
+  const nodes = list(p.nodes);
   return el(
     'section',
     { class: 'card pool' },
@@ -989,13 +997,30 @@ function poolCard(p) {
       'div',
       { class: 'claims' },
       el('h3', { class: 'section-title' }, '虚拟集群声明'),
-      claims.length ? claims.map(claimRow) : el('span', { class: 'muted small' }, '没有虚拟集群声明此池'),
+      claims.length ? claims.map((c) => claimRow(c, p)) : el('span', { class: 'muted small' }, '没有虚拟集群声明此池'),
+    ),
+    el(
+      'div',
+      { class: 'nodes' },
+      el('h3', { class: 'section-title' }, '节点'),
+      el('p', { class: 'muted small' }, '拖动节点到虚拟集群的声明即固定；拖到下方区域解除固定'),
+      el(
+        'div',
+        { class: 'node-list' },
+        nodes.length ? nodes.map((n) => nodeChip(n, p)) : el('span', { class: 'muted small' }, '选择器没有匹配的节点'),
+      ),
+      dropTarget(
+        el('div', { class: 'drop-zone' }, '解除固定：拖到此处'),
+        (d) => d.pool === p.name && d.pinnedTo !== '',
+        (d) => write('UnpinNode', 'pools', [d.pinnedTo, p.name, d.node]),
+      ),
     ),
   );
 }
 
-function claimRow(c) {
-  return el(
+function claimRow(c, p) {
+  const pinned = list(p.nodes).filter((n) => n.pinnedTo === c.virtualCluster).length;
+  const row = el(
     'div',
     { class: 'claim' },
     el(
@@ -1004,8 +1029,67 @@ function claimRow(c) {
       el('span', { class: 'mono' }, c.virtualCluster),
       c.displayName ? el('span', { class: 'muted small' }, c.displayName) : null,
     ),
-    el('span', { class: 'mono small muted' }, `min ${c.min} · max ${c.max} · desired ${c.desired}`),
+    el('span', { class: 'mono small muted claim-meta' }, `min ${c.min} · max ${c.max} · desired ${c.desired} · 固定 ${pinned}`),
   );
+  return dropTarget(
+    row,
+    (d) => d.pool === p.name && d.pinnedTo !== c.virtualCluster,
+    (d) => write('PinNode', 'pools', [c.virtualCluster, p.name, d.node]),
+  );
+}
+
+// nodeChip is one node of a pool. It can be dragged while it is ready and no
+// write is running. Its label says whether it is free, bound, pinned or draining.
+function nodeChip(n, p) {
+  const kind = !n.ready ? 'unready' : n.pinnedTo ? 'pinned' : n.holder ? 'busy' : 'free';
+  const label = !n.ready
+    ? '未就绪'
+    : n.pinnedTo
+      ? `固定 · ${n.pinnedTo}`
+      : n.holder
+        ? `${n.draining ? '排空中 · ' : ''}${n.holder}`
+        : '空闲';
+  return el(
+    'span',
+    {
+      class: `node-chip ${kind}`,
+      draggable: n.ready && !state.busy ? 'true' : false,
+      title: `${n.name} · ${label}`,
+      ondragstart: (e) => {
+        dragging = { node: n.name, pool: p.name, pinnedTo: n.pinnedTo };
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', n.name);
+      },
+      ondragend: endDrag,
+    },
+    el('span', { class: 'mono' }, n.name),
+    el('span', { class: 'node-state' }, label),
+  );
+}
+
+// dropTarget makes node a place a dragged node can be dropped. accepts says
+// whether a drag may land here, and drop runs with the dragged node once it has.
+function dropTarget(node, accepts, drop) {
+  node.addEventListener('dragover', (e) => {
+    if (!dragging || !accepts(dragging)) return;
+    e.preventDefault();
+    node.classList.add('drop-active');
+  });
+  node.addEventListener('dragleave', () => node.classList.remove('drop-active'));
+  node.addEventListener('drop', (e) => {
+    node.classList.remove('drop-active');
+    const d = dragging;
+    dragging = null;
+    if (!d || !accepts(d)) return;
+    e.preventDefault();
+    drop(d);
+  });
+  return node;
+}
+
+function endDrag() {
+  dragging = null;
+  document.querySelectorAll('.drop-active').forEach((x) => x.classList.remove('drop-active'));
 }
 
 // --- catalog -----------------------------------------------------------------
