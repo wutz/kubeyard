@@ -30,11 +30,22 @@ func (r *Reconciler) drain(ctx context.Context, np *v1alpha1.NodePool, leases []
 	drainTimeout := durationOr(np.Spec.Preemption.DrainTimeout, 0)
 	pending := false
 	for i := range leases {
-		l := &leases[i]
+		if leases[i].Status.Phase != v1alpha1.LeaseDraining {
+			continue
+		}
+		// The cached list can be behind finishDrain, so act only on the lease as the
+		// API server has it now.
+		var l v1alpha1.NodeLease
+		if err := r.live().Get(ctx, client.ObjectKey{Name: leases[i].Name}, &l); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return false, err
+		}
 		if l.Status.Phase != v1alpha1.LeaseDraining {
 			continue
 		}
-		done, err := r.drainNode(ctx, l, now, drainTimeout)
+		done, err := r.drainNode(ctx, &l, now, drainTimeout)
 		if err != nil {
 			return false, err
 		}
@@ -48,7 +59,7 @@ func (r *Reconciler) drain(ctx context.Context, np *v1alpha1.NodePool, leases []
 // that is the old owner, because the label is only rewritten at the handover.
 func (r *Reconciler) drainNode(ctx context.Context, l *v1alpha1.NodeLease, now time.Time, drainTimeout time.Duration) (bool, error) {
 	var node corev1.Node
-	if err := r.Get(ctx, client.ObjectKey{Name: l.Spec.Node}, &node); err != nil {
+	if err := r.live().Get(ctx, client.ObjectKey{Name: l.Spec.Node}, &node); err != nil {
 		if apierrors.IsNotFound(err) {
 			// A node that no longer exists has nothing left to drain.
 			return true, client.IgnoreNotFound(r.Delete(ctx, l))

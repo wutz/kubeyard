@@ -38,6 +38,10 @@ const (
 // a time, which gives the per-pool serialisation that §3 requires.
 type Reconciler struct {
 	client.Client
+	// Live reads straight from the API server, past the informer cache. Nil means
+	// Client. Steps that undo a binding read through it, because the cache can still
+	// show a lease that is already deleted.
+	Live client.Reader
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -47,6 +51,13 @@ func (r *Reconciler) now() time.Time {
 		return r.Now()
 	}
 	return time.Now()
+}
+
+func (r *Reconciler) live() client.Reader {
+	if r.Live != nil {
+		return r.Live
+	}
+	return r.Client
 }
 
 // observed is the state of one pool and the claims on it, read from the API.
@@ -394,9 +405,11 @@ func (r *Reconciler) unbindNode(ctx context.Context, name string) error {
 }
 
 // patchNode applies change to a node and patches the fields that changed.
+// The patch is optimistic: if the node changed since it was read, the write fails and
+// the next pass reads it again, instead of overwriting the taints of another write.
 func (r *Reconciler) patchNode(ctx context.Context, name string, change func(*corev1.Node)) error {
 	var node corev1.Node
-	if err := r.Get(ctx, client.ObjectKey{Name: name}, &node); err != nil {
+	if err := r.live().Get(ctx, client.ObjectKey{Name: name}, &node); err != nil {
 		return err
 	}
 	orig := node.DeepCopy()
@@ -404,7 +417,7 @@ func (r *Reconciler) patchNode(ctx context.Context, name string, change func(*co
 	if reflect.DeepEqual(orig.Labels, node.Labels) && reflect.DeepEqual(orig.Spec.Taints, node.Spec.Taints) {
 		return nil
 	}
-	return r.Patch(ctx, &node, client.MergeFrom(orig))
+	return r.Patch(ctx, &node, client.MergeFromWithOptions(orig, client.MergeFromWithOptimisticLock{}))
 }
 
 func withoutTaint(taints []corev1.Taint, key string) []corev1.Taint {
