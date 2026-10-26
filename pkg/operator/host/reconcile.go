@@ -371,7 +371,10 @@ func (r *Reconciler) apply(ctx context.Context, np *v1alpha1.NodePool, claims []
 			if l == nil || l.Spec.VirtualCluster != vc {
 				return fmt.Errorf("release %s from %s: no matching lease", node, vc)
 			}
-			if err := r.updateLease(ctx, l, l.Spec, draining(l, deadline)); err != nil {
+			// The node drains because the claim shrank, whatever bound it before.
+			spec := l.Spec
+			spec.Reason = v1alpha1.LeaseScale
+			if err := r.updateLease(ctx, l, spec, draining(l, deadline)); err != nil {
 				return err
 			}
 		}

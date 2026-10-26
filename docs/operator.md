@@ -197,7 +197,7 @@ Bound ──抢占/缩容──► Draining
   5. 节点清空 ──► Released ──► 新 NodeLease(Binding) 给申请者
 ```
 
-抢占是破坏性操作。GUI 在调高某个 VC 的优先级或 desired 之前，先给 VC 加注解 `kubeyard.wutz.dev/dry-run=true`，operator 把预览结果（会被抢占的 VC、节点、宽限期）写入 status，管理员确认后再提交。
+抢占是破坏性操作。GUI 在改动某个 VC 的 desired 之前先预览：`PreviewDesired` 只读地调用 operator 自己的规划代码（`pkg/operator/host` 的 `PreviewDesired`），列出会被抢占的节点与来源 VC、会被释放的节点、宽限期与强制回收时长（自确认起算），不写注解，也不写 status。管理员确认时，GUI 把预览里的受影响节点集合随写入一起提交；写入前 GUI 用同一函数重算，集合不一致则拒绝，因此确认的内容就是实际发生的变化。这与早先设想的 `dry-run=true` 注解不同：不需要在 VC 上留下临时注解或预览状态。已知限制：自动伸缩声明的待调度需求未读取，预览标记为近似。
 
 ## 4. 凭证
 

@@ -256,6 +256,29 @@ func TestSurplusLeaseIsDrainedNotDeleted(t *testing.T) {
 	}
 }
 
+// A lease that was preempted and is later released for a smaller desired size
+// drains for that reason, so its reason is Scale, not the old Preempt.
+func TestReleasedLeaseTakesScaleReason(t *testing.T) {
+	stale := newLeaseAt("n2", "a", t0.Add(time.Hour))
+	stale.Spec.Reason = v1alpha1.LeasePreempt
+	c := newClient(t,
+		newPool(v1alpha1.PreemptionLowerPriority),
+		newVC("a", 1, false, 0, 3, 1),
+		newNode("n1", true, gpu),
+		newNode("n2", true, gpu),
+		newLease("n1", "a"),
+		stale,
+	)
+	if err := runPass(c); err != nil {
+		t.Fatal(err)
+	}
+	var released v1alpha1.NodeLease
+	get(t, c, "n2", &released)
+	if released.Status.Phase != v1alpha1.LeaseDraining || released.Spec.Reason != v1alpha1.LeaseScale {
+		t.Fatalf("n2 lease = %+v, want Draining with reason Scale", released)
+	}
+}
+
 func TestMinAboveHealthyNodesIsRejected(t *testing.T) {
 	c := newClient(t,
 		newPool(v1alpha1.PreemptionLowerPriority),

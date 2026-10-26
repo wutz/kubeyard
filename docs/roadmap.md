@@ -100,6 +100,8 @@
   - 2026-10-25 k3d 实测（真实 operator 在宿主机运行，`gui/live_reclaim_test.go`，设置 `KUBEYARD_LIVE_RECLAIM` 时运行）：`low` 持有节点时，`high` 到达，operator 写入 `Preempting=True`（NodesReclaimed，列出节点与截止时间）与 `default` 下的 Warning Event；`App.VirtualClusters` 读到该条件；移交后条件清除。把抓取到的真实返回值交给详情页渲染，横幅显示正确（静态页 + Wails 绑定替身）。未验证：在 Wails 原生窗口内点击操作，本机未自动化该窗口。
     - 2026-10-25 本地 k3d 实测（operator 二进制在宿主机运行，单节点 NodePool，grace 30s / drainTimeout 60s）：low 持有节点并运行 Pod，high（优先级 5）到达后 low 出现 Event 与条件，条件内容为 `1 个节点将于 … 前回收：[k3d-kubeyard-gui-agent-0]`；grace 到期后 Pod 被驱逐，约 10 秒内节点移交给 high，条件消失，Event 仅 1 条，operator 日志 0 条错误。测试后已删除验证对象并清除节点标签与 taint。
   - [x] GUI 侧验证（2026-10-25，k3d，按用户路径操作）：`low` 持有节点时，把 `high` 的 desired 调为 1，`low` 详情页出现"即将回收"横幅，内容为节点与截止时间；横幅内的节点列表原先显示为 `[k3d-kubeyard-ux-agent-0]`（Go 切片格式），已在 [#40](https://github.com/wutz/kubeyard/pull/40) 修为逗号分隔。移交给 `high` 后 `Preempting` 条件清除（API 确认）。未在修复后的 operator 上复测横幅文案。
+  - [x] 调整 desired 前的预览与确认（`gui/desired.go`、`pkg/operator/host/preview.go`，`docs/operator.md` §3.4）：资源池页改 desired 先预览。`PreviewDesired` 用 operator 自己的分配与抢占代码只读计算，列出抢占节点（来源 VC、宽限期与强制回收时长）、释放节点与直接授予的节点。有受影响节点时需输入 VC 名确认；写入时 GUI 重算并与确认的节点集合比对，不一致则拒绝。单元测试覆盖抢占宽限、空闲授予、降低 desired 释放、缺口、准入拒绝与不改写输入。
+  - 2026-10-26 本地 k3d 实测（真实 API，operator 宿主机运行，GUI 经 headless 服务与浏览器）：high 0→1 的预览为抢占 agent-0（来自 low，宽限 5 分钟，15 分钟内强制回收），输入 high 后应用，high desired=1，租约 reason=Preempt、phase=Draining，low 出现 Preempting 条件；宽限结束后节点移交给 high（Bound），条件清除。high 1→0 的预览为释放 agent-0，输入名称后应用，租约进入 Draining。实测中发现并修复两处：预览原先显示绝对截止时间，但 operator 在确认时才开始计时，二者相差约 2 分钟，已改为显示时长；释放的租约沿用了抢占时的 reason=Preempt，已修为 Scale（回归测试 `TestReleasedLeaseTakesScaleReason`）。修复后的 reason 只有单元测试覆盖，未在修复后的 operator 上复测。
 
 ## M4 计量
 
