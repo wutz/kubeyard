@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -104,24 +105,16 @@ func checkUnpin(vc *v1alpha1.VirtualCluster, pool, name string) error {
 // VirtualCluster with its resourceVersion, so a change made in between fails the
 // write rather than being overwritten.
 func setPinned(ctx context.Context, cs kubernetes.Interface, dc dynamic.Interface, vcName, poolName, node string, pin bool) error {
-	obj, err := dc.Resource(virtualClusterResource).Get(ctx, vcName, metav1.GetOptions{})
+	vc, err := readVirtualCluster(ctx, dc, vcName)
 	if err != nil {
 		return fmt.Errorf("读取虚拟集群 %s：%w", vcName, err)
 	}
-	var vc v1alpha1.VirtualCluster
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &vc); err != nil {
-		return fmt.Errorf("解析虚拟集群 %s：%w", vcName, err)
-	}
 	var np v1alpha1.NodePool
-	obj, err = dc.Resource(nodePoolResource).Get(ctx, poolName, metav1.GetOptions{})
-	if err != nil {
+	if err := getKubeyard(ctx, dc, nodePoolResource, poolName, &np); err != nil {
 		return fmt.Errorf("读取资源池 %s：%w", poolName, err)
 	}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &np); err != nil {
-		return fmt.Errorf("解析资源池 %s：%w", poolName, err)
-	}
 
-	pc := claimOf(&vc, poolName)
+	pc := claimOf(vc, poolName)
 	if pc == nil {
 		return fmt.Errorf("虚拟集群 %s 未声明资源池 %s", vcName, poolName)
 	}
@@ -142,23 +135,48 @@ func setPinned(ctx context.Context, cs kubernetes.Interface, dc dynamic.Interfac
 		if err := listKubeyard(ctx, dc, nodeLeaseResource, &leases); err != nil && !missingCRD(err) {
 			return fmt.Errorf("读取节点租约：%w", err)
 		}
-		if err := checkPin(&np, &vc, n, vcs.Items, leases.Items, node); err != nil {
+		if err := checkPin(&np, vc, n, vcs.Items, leases.Items, node); err != nil {
 			return err
 		}
 		pc.PinnedNodes = append(pc.PinnedNodes, node)
 	} else {
-		if err := checkUnpin(&vc, poolName, node); err != nil {
+		if err := checkUnpin(vc, poolName, node); err != nil {
 			return err
 		}
 		pc.PinnedNodes = slices.DeleteFunc(pc.PinnedNodes, func(n string) bool { return n == node })
 	}
+	return writeVirtualCluster(ctx, dc, vc)
+}
 
-	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&vc)
+// getKubeyard reads one cluster-scoped Kubeyard object into obj, a pointer to a
+// pkg/api type.
+func getKubeyard(ctx context.Context, dc dynamic.Interface, gvr schema.GroupVersionResource, name string, obj any) error {
+	u, err := dc.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	return runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, obj)
+}
+
+// readVirtualCluster reads a VirtualCluster. Its resourceVersion is kept, so
+// writeVirtualCluster fails when the object changed after this read.
+func readVirtualCluster(ctx context.Context, dc dynamic.Interface, name string) (*v1alpha1.VirtualCluster, error) {
+	var vc v1alpha1.VirtualCluster
+	if err := getKubeyard(ctx, dc, virtualClusterResource, name, &vc); err != nil {
+		return nil, err
+	}
+	return &vc, nil
+}
+
+// writeVirtualCluster writes vc back. The write fails when the cluster changed
+// the VirtualCluster since it was read.
+func writeVirtualCluster(ctx context.Context, dc dynamic.Interface, vc *v1alpha1.VirtualCluster) error {
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(vc)
 	if err != nil {
 		return err
 	}
 	if _, err := dc.Resource(virtualClusterResource).Update(ctx, &unstructured.Unstructured{Object: m}, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("写入虚拟集群 %s：%w（可能已被他人修改，请刷新后重试）", vcName, err)
+		return fmt.Errorf("写入虚拟集群 %s：%w（可能已被他人修改，请刷新后重试）", vc.Name, err)
 	}
 	return nil
 }

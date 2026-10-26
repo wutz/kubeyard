@@ -357,6 +357,14 @@ html[data-titlebar="hidden"] #app.sidebar-collapsed .topbar { padding-left: calc
   text-align: center;
 }
 
+/* Desired size: the editor opens under its claim, and the plan lists what a change takes. */
+.desired-editor { display: grid; gap: 8px; padding: 4px 0 8px; }
+.desired-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.input.desired-input { width: 96px; }
+.input.desired-name { width: 200px; }
+.desired-plan { display: grid; gap: 4px; }
+.desired-plan .small { margin: 0; }
+
 /* Virtual clusters */
 
 .pool.selectable { cursor: pointer; }

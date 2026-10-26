@@ -40,6 +40,8 @@ const state = {
   // confirm names the action waiting for its second click.
   confirm: '',
   busy: false,
+  // desired is the open desired-size editor of one claim, see desiredEditor.
+  desired: null,
   // notice and actionError show the outcome of the last write, in the area
   // the write was started from: "source" for Flux and the catalog source,
   // "addon" for an addon.
@@ -237,6 +239,7 @@ async function write(method, scope, args = [], settled = null) {
   if (ok) state.form = null;
   renderContent();
   if (ok && settled) followAddon(args[0], settled);
+  return ok;
 }
 
 // followAddon re-reads the catalog until the addon's status settles, so the page
@@ -287,6 +290,7 @@ function selectContext(name) {
   state.adminView = null;
   state.selectedAddon = '';
   state.form = null;
+  state.desired = null;
   state.confirm = '';
   state.notice = '';
   state.actionError = '';
@@ -300,6 +304,7 @@ function selectContext(name) {
 function setPage(page) {
   state.page = page;
   state.adminView = null;
+  state.desired = null;
   state.confirm = '';
   state.notice = '';
   state.actionError = '';
@@ -1088,6 +1093,7 @@ function poolCard(p) {
 
 function claimRow(c, p) {
   const pinned = list(p.nodes).filter((n) => n.pinnedTo === c.virtualCluster).length;
+  const size = c.autoscale ? '自动伸缩' : `desired ${c.desired}`;
   const row = el(
     'div',
     { class: 'claim' },
@@ -1097,12 +1103,164 @@ function claimRow(c, p) {
       el('span', { class: 'mono' }, c.virtualCluster),
       c.displayName ? el('span', { class: 'muted small' }, c.displayName) : null,
     ),
-    el('span', { class: 'mono small muted claim-meta' }, `min ${c.min} · max ${c.max} · desired ${c.desired} · 固定 ${pinned}`),
+    el('span', { class: 'mono small muted claim-meta' }, `min ${c.min} · max ${c.max} · ${size} · 固定 ${pinned}`),
+    c.autoscale
+      ? null
+      : el(
+          'button',
+          {
+            class: 'btn',
+            disabled: state.busy,
+            onclick: () => {
+              state.desired = { vc: c.virtualCluster, pool: p.name, value: String(c.desired), preview: null, typed: '', error: '', loading: false };
+              renderContent();
+            },
+          },
+          '调整 desired',
+        ),
   );
-  return dropTarget(
-    row,
-    (d) => d.pool === p.name && d.pinnedTo !== c.virtualCluster,
-    (d) => write('PinNode', 'pools', [c.virtualCluster, p.name, d.node]),
+  return el(
+    'div',
+    { class: 'claim-block' },
+    dropTarget(
+      row,
+      (d) => d.pool === p.name && d.pinnedTo !== c.virtualCluster,
+      (d) => write('PinNode', 'pools', [c.virtualCluster, p.name, d.node]),
+    ),
+    desiredEditor(c, p),
+  );
+}
+
+// desiredEditor is the open desired-size editor of a claim. It previews the
+// change before anything is written. A change that would take or release bound
+// nodes needs the claim's name typed first, so the admin confirms what goes.
+// The write sends the nodes the preview showed, and the server refuses when the
+// cluster would now take a different set (docs/gui.md §3).
+function desiredEditor(c, p) {
+  const d = state.desired;
+  if (!d || d.vc !== c.virtualCluster || d.pool !== p.name) return null;
+  const inRange = (v) => Number.isInteger(v) && v >= c.min && v <= c.max;
+  // Typing does not re-render, so the field keeps its focus. It updates the
+  // preview button and drops a plan that no longer matches the value.
+  const slot = el('div', { class: 'desired-slot' }, d.preview ? desiredPlan(c, p, d) : null);
+  const previewButton = el(
+    'button',
+    {
+      class: 'btn',
+      disabled: !inRange(Number(d.value)) || state.busy || d.loading,
+      onclick: () => previewDesired(c, p, Number(d.value)),
+    },
+    d.loading ? '预览中…' : '预览',
+  );
+  return el(
+    'div',
+    { class: 'desired-editor' },
+    el(
+      'div',
+      { class: 'desired-row' },
+      el('span', { class: 'small muted' }, `min ${c.min} – max ${c.max}`),
+      el('input', {
+        class: 'input desired-input',
+        type: 'number',
+        min: c.min,
+        max: c.max,
+        step: 1,
+        value: d.value,
+        disabled: state.busy,
+        oninput: (e) => {
+          d.value = e.target.value;
+          previewButton.disabled = !inRange(Number(d.value)) || state.busy || d.loading;
+          if (d.preview) {
+            d.preview = null;
+            slot.replaceChildren();
+          }
+        },
+      }),
+      previewButton,
+      el(
+        'button',
+        {
+          class: 'btn',
+          onclick: () => {
+            state.desired = null;
+            renderContent();
+          },
+        },
+        '取消',
+      ),
+    ),
+    d.error ? alert(d.error, 'error') : null,
+    slot,
+  );
+}
+
+// typedConfirm is the name field and apply button of a change that takes nodes.
+// Typing updates the button in place, so the field keeps its focus.
+function typedConfirm(c, d, apply) {
+  const button = el('button', { class: 'btn btn-primary', onclick: apply }, '确认应用');
+  const input = el('input', {
+    class: 'input desired-input desired-name',
+    placeholder: `输入 ${c.virtualCluster} 确认`,
+    value: d.typed,
+    disabled: state.busy,
+    oninput: (e) => {
+      d.typed = e.target.value;
+      button.disabled = d.typed !== c.virtualCluster || state.busy;
+    },
+  });
+  button.disabled = d.typed !== c.virtualCluster || state.busy;
+  return el('div', { class: 'desired-row' }, input, button);
+}
+
+// previewDesired reads what setting the claim to n would do, into the open editor.
+async function previewDesired(c, p, n) {
+  const d = state.desired;
+  d.loading = true;
+  d.error = '';
+  renderContent();
+  try {
+    const view = await call('PreviewDesired', state.selected, c.virtualCluster, p.name, n);
+    d.preview = { desired: n, view };
+    d.typed = '';
+  } catch (err) {
+    d.error = err.message;
+  } finally {
+    d.loading = false;
+    renderContent();
+  }
+}
+
+// desiredPlan lists what the previewed change does and the button that applies
+// it. The nodes it takes or releases are sent with the write as the set the
+// admin confirmed.
+function desiredPlan(c, p, d) {
+  const { desired: n, view: v } = d.preview;
+  const affected = [...v.preempt.map((x) => x.node), ...v.release.map((x) => x.node)].sort();
+  const lines = [
+    ...v.preempt.map((x) => `抢占 ${x.node}：来自 ${x.from}，宽限 ${v.grace} 后驱逐，${v.force} 内强制回收（自确认起算）`),
+    ...v.release.map((x) => `释放 ${x.node}：来自 ${x.virtualCluster}`),
+  ];
+  const apply = () =>
+    write('SetDesired', 'pools', [c.virtualCluster, p.name, n, affected]).then((ok) => {
+      if (!ok) return;
+      state.desired = null;
+      renderContent();
+    });
+  return el(
+    'div',
+    { class: 'desired-plan' },
+    n === c.desired
+      ? el('span', { class: 'small muted' }, `desired 已是 ${n}，无需改动`)
+      : el('span', { class: 'small' }, `desired ${c.desired} → ${n}`),
+    lines.length ? lines.map((line) => el('span', { class: 'small' }, line)) : null,
+    v.granted.length ? el('span', { class: 'small muted' }, `将直接授予：${v.granted.join(', ')}`) : null,
+    v.shortfall > 0 ? el('span', { class: 'small muted' }, `还差 ${v.shortfall} 个节点，即使抢占也不够，将保持等待`) : null,
+    v.approximate ? el('span', { class: 'small muted' }, '自动伸缩声明的待调度需求未计入，结果为近似') : null,
+    n === c.desired
+      ? null
+      : affected.length
+        ? typedConfirm(c, d, apply)
+        : el('div', { class: 'desired-row' }, el('button', { class: 'btn btn-primary', disabled: state.busy, onclick: apply }, '应用')),
   );
 }
 

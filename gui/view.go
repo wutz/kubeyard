@@ -112,6 +112,8 @@ type claimView struct {
 	Min            int32  `json:"min"`
 	Max            int32  `json:"max"`
 	Desired        int32  `json:"desired"`
+	// Autoscale is set when the operator sizes the claim, so desired has no effect.
+	Autoscale bool `json:"autoscale"`
 }
 
 // toPoolsView builds the resource pool page from the NodePools, the
@@ -148,6 +150,7 @@ func toPoolsView(installed bool, pools []v1alpha1.NodePool, vcs []v1alpha1.Virtu
 				Min:            c.Min,
 				Max:            c.Max,
 				Desired:        c.Desired,
+				Autoscale:      c.Autoscale != nil && c.Autoscale.Enabled,
 			})
 		}
 	}
