@@ -80,7 +80,9 @@
   - [x] `pkg/kube`：从 `status.adminKubeconfigSecretRef` 读取 Secret 的键；未生成、键缺失、值为空都报错；导出前必须写入审计 Event（`AdminKubeconfigExported`，写在 `default` 命名空间，因为 VirtualCluster 是 cluster 级对象）。单元测试 7 个。
   - [x] `POST /api/virtualclusters/{name}/admin-kubeconfig`：需要 `confirm` 与名称一致，响应 `Cache-Control: no-store`，审计 Event 写入失败时不返回凭证。测试覆盖 token 与确认。
   - 2026-10-25 本地 k3d 实测：手动创建 Secret 与 status 引用，GUI headless 运行。未确认返回 400；确认后返回 200 与 kubeconfig，审计 Event 写入，`Cache-Control: no-store`。实测中发现并修复：最初把 Event 写入宿主命名空间，API 因 involvedObject 为 cluster 级对象而拒绝（失败时正确地返回 502，且不返回凭证）。
-  - 未完成：vcluster 尚未由 operator 生成 admin Secret，因此端到端只能用手动 Secret 验证；"以该 VC 管理员身份打开"未实现。
+  - 未完成：vcluster 尚未由 operator 生成 admin Secret，因此端到端只能用手动 Secret 验证。
+  - [x] 以该 VC 管理员身份打开（`gui/api.go` 的 `OpenVirtualClusterAdmin`，`pkg/kube` 的 `AdminClient`，详情页两步确认）：读取 `status.adminKubeconfigSecretRef` 指向的 Secret，在内存中建立 admin 客户端，读取该 VC 的节点与 Pod，只把概览返回页面，凭证不返回。读取前先写入审计 Event `AdminKubeconfigOpened`，写入失败则不读取凭证。单元测试 3 个，覆盖确认、先记录后读取、记录失败时不读取凭证。
+  - 2026-10-26 本地 k3d 实测：用宿主机 kubeconfig 作为 stand-in，放入 `vc-low/low-admin` 并把 `low` 的 status 引用指向它。详情页两步确认后显示 low 的 2 个节点与 11 个 Pod，带"正在以 low 的 cluster-admin 身份查看"提示；`default` 下写入 `AdminKubeconfigOpened` Event（操作来源含 context）；"关闭"后收起。引用指向不存在的 Secret 时页面显示错误，Event 仍已写入，未返回凭证。未验证：vcluster 生成的真实 admin Secret（见上条）。
   - 轮换注解（范围决定，未实现）：`docs/operator.md` §4.1 把 kubeconfig 失效交给 vcluster 自己的证书轮换行为，注释为"版本相关，实现阶段核实"。host 模式不渲染也不安装 vcluster values，写一个没有消费者的注解就是假功能，因此页面只提供导出，不提供轮换按钮。等 render 链路落地再按 vcluster 版本核实语义。
 - GUI：虚拟集群、资源池页面，节点拖拽分配
   - [x] 资源池页（`GET /api/pools`）：每个池的 total / free / reserved / unhealthy 与该池上的 VC 声明，池与声明按名称排序；未安装 operator 时说明原因。
@@ -88,7 +90,7 @@
   - 2026-10-25 浏览器实测（k3d context，深色与浅色两套主题）：4 个 VC 按优先级 10 → 5 → 3 → 1 排列，vc-demo 卡片点开详情，对外地址显示 `Ingress · vc-demo.example.com:7443`，未分配节点时表格显示"还没有分配节点"；导出按钮先变成"确认导出 vc-demo 的管理员 kubeconfig"，确认后出现成功提示与 kubeconfig 内容，"下载文件"生成 `application/yaml` 的 64 字节 blob；切换 context 后已导出的内容被清空。只读的 bz1-dev1（不写任何东西）上页面显示"未安装 Kubeyard operator"空状态。
   - [x] 节点拖拽分配（`gui/pinning.go`，[#50](https://github.com/wutz/kubeyard/pull/50)）：资源池页把节点拖到 VC 的声明即固定（写 pinnedNodes），拖到"解除固定"区即解除。写入前按 webhook 的规则检查，并拒绝会让 allocator 停转的情形：节点仍被其它 VC 占用或已固定给其它 VC、节点未就绪、不匹配选择器、超过 max。单元测试覆盖 `checkPin` / `checkUnpin` 与池的节点视图。
   - 2026-10-26 本地 k3d 实测（真实 API，operator 宿主机运行，GUI 经 headless 服务与浏览器）：拖到 low 后 pinnedNodes 写入，operator 在 37 秒内把节点租给 low（Bound）；拖到 high 被拒（"已固定给虚拟集群 low"）；节点仍被 high 占用时拖到 low 被拒（"仍由虚拟集群 high 占用，等它释放后再固定"）；不存在的节点被拒；拖到解除区后 pinnedNodes 清空，租约进入 Draining。operator 日志无错误。
-  - 未完成：页面没有"以该 VC 管理员身份打开"（M5）；窄屏下侧边栏不折叠（375px 视口出现横向滚动），随 GUI 整体响应式一起处理。
+  - 未完成：窄屏下侧边栏不折叠（375px 视口出现横向滚动），随 GUI 整体响应式一起处理。
 
 ## M3 弹性与抢占
 
