@@ -78,6 +78,11 @@ func TestWriteNeedsContext(t *testing.T) {
 const (
 	nodePoolsPath       = "/apis/kubeyard.wutz.dev/v1alpha1/nodepools"
 	virtualClustersPath = "/apis/kubeyard.wutz.dev/v1alpha1/virtualclusters"
+	nodeLeasesPath      = "/apis/kubeyard.wutz.dev/v1alpha1/nodeleases"
+	nodesPath           = "/api/v1/nodes"
+
+	emptyNodeLeasesList = `{"apiVersion":"kubeyard.wutz.dev/v1alpha1","kind":"NodeLeaseList","metadata":{},"items":[]}`
+	emptyNodesList      = `{"apiVersion":"v1","kind":"NodeList","metadata":{},"items":[]}`
 
 	notFoundStatus  = `{"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"the server could not find the requested resource","reason":"NotFound","code":404}`
 	forbiddenStatus = `{"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"nodepools is forbidden","reason":"Forbidden","code":403}`
@@ -149,6 +154,8 @@ func TestPoolsJSONShape(t *testing.T) {
 	fakeCluster(t, serveLists(map[string]string{
 		nodePoolsPath:       nodePoolsList,
 		virtualClustersPath: virtualClustersList,
+		nodeLeasesPath:      emptyNodeLeasesList,
+		nodesPath:           emptyNodesList,
 	}))
 	got, err := NewApp().Pools("fake")
 	if err != nil {
@@ -170,7 +177,7 @@ func TestPoolsJSONShape(t *testing.T) {
 	if err := json.Unmarshal(top.Pools[0], &pool); err != nil {
 		t.Fatal(err)
 	}
-	assertKeys(t, "pool", pool, "name", "displayName", "total", "free", "reserved", "unhealthy", "claims")
+	assertKeys(t, "pool", pool, "name", "displayName", "total", "free", "reserved", "unhealthy", "claims", "nodes")
 
 	var claims []map[string]json.RawMessage
 	if err := json.Unmarshal(pool["claims"], &claims); err != nil || len(claims) != 1 {

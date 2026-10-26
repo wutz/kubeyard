@@ -115,6 +115,26 @@ func (a *App) UninstallAddon(contextName, name string) (string, error) {
 		})
 }
 
+// PinNode pins a node of a pool to the claim of a virtual cluster, so the
+// operator grants it to that cluster first (docs/gui.md §3, dragging a node onto
+// a virtual cluster). The rules are in checkPin.
+func (a *App) PinNode(contextName, vc, pool, node string) (string, error) {
+	return a.write(contextName, "固定节点", "已固定节点 "+node+" 到 "+vc+"，operator 下一轮分配后生效", actionTimeout,
+		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+			return setPinned(ctx, cs, dc, vc, pool, node, true)
+		})
+}
+
+// UnpinNode removes a node from the pinned nodes of a virtual cluster's claim.
+// The node stays with the cluster until the operator releases it, like any other
+// node the claim holds.
+func (a *App) UnpinNode(contextName, vc, pool, node string) (string, error) {
+	return a.write(contextName, "解除固定", "已解除节点 "+node+" 的固定", actionTimeout,
+		func(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, dc dynamic.Interface) error {
+			return setPinned(ctx, cs, dc, vc, pool, node, false)
+		})
+}
+
 // saveFileDialog is the native save dialog. A variable, so the local harness can
 // pick the file without a window; the product always uses the dialog.
 var saveFileDialog = runtime.SaveFileDialog

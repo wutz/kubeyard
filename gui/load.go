@@ -181,20 +181,21 @@ func helmReleaseNames(ad catalog.Addon) []string {
 var (
 	nodePoolResource       = v1alpha1.SchemeGroupVersion.WithResource("nodepools")
 	virtualClusterResource = v1alpha1.SchemeGroupVersion.WithResource("virtualclusters")
+	nodeLeaseResource      = v1alpha1.SchemeGroupVersion.WithResource("nodeleases")
 )
 
 // loadPools reads the NodePools of a context and the VirtualClusters that claim
 // them. A cluster without the Kubeyard CRDs is not an error: the view reports
 // that the operator is not installed.
 func loadPools(ctx context.Context, contextName string) (poolsView, error) {
-	_, _, dc, err := clients(contextName)
+	_, cs, dc, err := clients(contextName)
 	if err != nil {
 		return poolsView{}, err
 	}
 	var pools v1alpha1.NodePoolList
 	if err := listKubeyard(ctx, dc, nodePoolResource, &pools); err != nil {
 		if missingCRD(err) {
-			return toPoolsView(false, nil, nil), nil
+			return toPoolsView(false, nil, nil, nil, nil), nil
 		}
 		return poolsView{}, fmt.Errorf("读取 NodePool 失败：%w", err)
 	}
@@ -202,7 +203,15 @@ func loadPools(ctx context.Context, contextName string) (poolsView, error) {
 	if err := listKubeyard(ctx, dc, virtualClusterResource, &claims); err != nil && !missingCRD(err) {
 		return poolsView{}, fmt.Errorf("读取 VirtualCluster 失败：%w", err)
 	}
-	return toPoolsView(true, pools.Items, claims.Items), nil
+	var leases v1alpha1.NodeLeaseList
+	if err := listKubeyard(ctx, dc, nodeLeaseResource, &leases); err != nil && !missingCRD(err) {
+		return poolsView{}, fmt.Errorf("读取节点租约失败：%w", err)
+	}
+	nodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return poolsView{}, fmt.Errorf("读取节点失败：%w", err)
+	}
+	return toPoolsView(true, pools.Items, claims.Items, nodes.Items, leases.Items), nil
 }
 
 // loadVirtualClusters reads the VirtualClusters of a context, with the pool

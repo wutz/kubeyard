@@ -315,13 +315,47 @@ html[data-titlebar="hidden"] #app.sidebar-collapsed .topbar { padding-left: calc
 .claims .section-title { margin-bottom: 4px; }
 .claim {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: 2px 12px;
   padding: 6px 0;
   border-top: 1px solid var(--hairline-soft);
 }
-.claim-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; overflow: hidden; }
+.claim-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.claim-meta { white-space: nowrap; }
+.claim.drop-active,
+.drop-zone.drop-active { border-color: var(--accent); background: var(--accent-soft); }
+
+/* Pool nodes: drag a chip onto a claim to pin it, onto the drop zone to unpin it. */
+.nodes { display: grid; gap: 6px; }
+.nodes p { margin: 0; }
+.node-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.node-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--elevated);
+  font-size: 12px;
+  cursor: grab;
+  user-select: none;
+}
+.node-chip.pinned { border-color: var(--accent); }
+.node-chip.busy { color: var(--body); }
+.node-chip.unready { opacity: 0.5; cursor: not-allowed; }
+.node-state { color: var(--mute); }
+.node-chip.pinned .node-state { color: var(--accent); }
+.drop-zone {
+  padding: 8px 10px;
+  border: 1px dashed var(--hairline);
+  border-radius: 6px;
+  color: var(--mute);
+  font-size: 12px;
+  text-align: center;
+}
 
 /* Virtual clusters */
 
