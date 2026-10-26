@@ -701,8 +701,12 @@ const PHASE_LABEL = {
   Deleting: ['删除中', 'bad'],
 };
 
+// phaseBadge shows the phase the operator reported. The host operator does not
+// set a phase yet (docs/roadmap.md M2), so an empty phase shows no badge: a
+// "未报告" badge on every cluster reads as a fault, and the card already shows
+// the claims and the nodes held.
 function phaseBadge(phase) {
-  if (!phase) return badge('未报告状态', '');
+  if (!phase) return null;
   const [label, kind] = PHASE_LABEL[phase] || [phase, ''];
   return badge(label, kind);
 }
