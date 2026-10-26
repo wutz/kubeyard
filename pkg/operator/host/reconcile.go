@@ -74,7 +74,23 @@ func (r *Reconciler) observe(ctx context.Context, np *v1alpha1.NodePool) (observ
 	o.nodes = nodes.Items
 	o.leases = poolLeases(leases.Items, np.Name)
 	o.vcs = vcs.Items
-	o.claims = buildClaims(np, o.vcs, o.leases)
+	o.claims = buildClaims(np, o.vcs, o.leases, r.now())
+	sel, err := metav1.LabelSelectorAsSelector(&np.Spec.NodeSelector)
+	if err != nil {
+		return o, err
+	}
+	// Pending pods are read per VirtualCluster, not per pool: a pod counts toward
+	// every pool its VirtualCluster claims.
+	inPool := poolNodes(sel, o.nodes)
+	for i := range o.claims {
+		c := &o.claims[i]
+		if !c.Autoscale {
+			continue
+		}
+		if c.Pending, err = r.pendingDemand(ctx, c.VC, inPool); err != nil {
+			return o, err
+		}
+	}
 	return o, nil
 }
 
@@ -87,6 +103,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	o, err := r.observe(ctx, &np)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	idleChanged, err := r.trackIdle(ctx, &np, o)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if idleChanged {
+		if o, err = r.observe(ctx, &np); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	st, err := poolStatus(&np, o)
 	if err != nil {
@@ -132,11 +157,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 	// Pods leave a draining node on their own schedule, and no watch sees that,
-	// so a pool with draining nodes is polled again.
+	// so a pool with draining nodes is polled again. Autoscale demand and idle time
+	// are polled the same way.
+	var after time.Duration
 	if pending {
-		return ctrl.Result{RequeueAfter: drainPoll}, nil
+		after = drainPoll
 	}
-	return ctrl.Result{}, nil
+	if hasAutoscale(o.claims) && (after == 0 || autoscalePoll < after) {
+		after = autoscalePoll
+	}
+	return ctrl.Result{RequeueAfter: after}, nil
 }
 
 // poolLeases keeps the leases of one pool that are not yet released.
@@ -152,7 +182,8 @@ func poolLeases(all []v1alpha1.NodeLease, poolName string) []v1alpha1.NodeLease 
 
 // buildClaims turns the VirtualClusters' poolClaims on this pool into alloc claims.
 // The pool's preemption policy Never switches preemption off for every claim.
-func buildClaims(np *v1alpha1.NodePool, vcs []v1alpha1.VirtualCluster, leases []v1alpha1.NodeLease) []alloc.Claim {
+// Pending demand is read from the pods by observe, not here.
+func buildClaims(np *v1alpha1.NodePool, vcs []v1alpha1.VirtualCluster, leases []v1alpha1.NodeLease, now time.Time) []alloc.Claim {
 	var out []alloc.Claim
 	for i := range vcs {
 		vc := &vcs[i]
@@ -171,14 +202,19 @@ func buildClaims(np *v1alpha1.NodePool, vcs []v1alpha1.VirtualCluster, leases []
 				Pinned:      pc.PinnedNodes,
 				Autoscale:   pc.Autoscale != nil && pc.Autoscale.Enabled,
 			}
+			var mine []v1alpha1.NodeLease
 			for _, l := range leases {
 				if l.Spec.VirtualCluster == vc.Name {
+					mine = append(mine, l)
 					c.Current = append(c.Current, alloc.Lease{
 						Node:     l.Spec.Node,
 						BoundAt:  boundAt(&l),
 						Draining: l.Status.Phase == v1alpha1.LeaseDraining,
 					})
 				}
+			}
+			if c.Autoscale {
+				c.Idle = idleNodes(mine, now, scaleDownIdle(pc))
 			}
 			out = append(out, c)
 		}
@@ -425,6 +461,10 @@ func (r *Reconciler) saveAllocations(ctx context.Context, np *v1alpha1.NodePool,
 	for _, l := range o.leases {
 		nodesByVC[l.Spec.VirtualCluster] = append(nodesByVC[l.Spec.VirtualCluster], l.Spec.Node)
 	}
+	demandByVC := map[string]int{}
+	for _, c := range o.claims {
+		demandByVC[c.VC] = c.Pending
+	}
 	for i := range o.vcs {
 		vc := &o.vcs[i]
 		var entries []v1alpha1.PoolAllocation
@@ -433,9 +473,11 @@ func (r *Reconciler) saveAllocations(ctx context.Context, np *v1alpha1.NodePool,
 				entries = append(entries, a)
 			}
 		}
-		if nodes := nodesByVC[vc.Name]; len(nodes) > 0 {
+		nodes := nodesByVC[vc.Name]
+		demand := demandByVC[vc.Name]
+		if len(nodes) > 0 || demand > 0 {
 			sort.Strings(nodes)
-			entries = append(entries, v1alpha1.PoolAllocation{Pool: np.Name, Nodes: nodes})
+			entries = append(entries, v1alpha1.PoolAllocation{Pool: np.Name, Nodes: nodes, PendingDemand: int32(demand)})
 		}
 		if reflect.DeepEqual(entries, vc.Status.Allocations) {
 			continue

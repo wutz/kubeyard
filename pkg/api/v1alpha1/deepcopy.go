@@ -280,4 +280,8 @@ func (in *NodeLeaseStatus) DeepCopyInto(out *NodeLeaseStatus) {
 		out.DrainDeadline = new(metav1.Time)
 		*out.DrainDeadline = *in.DrainDeadline
 	}
+	if in.IdleSince != nil {
+		out.IdleSince = new(metav1.Time)
+		*out.IdleSince = *in.IdleSince
+	}
 }
