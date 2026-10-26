@@ -467,3 +467,13 @@ tr.selected td { background: var(--accent-soft); }
 @media (max-width: 1040px) {
   .cards { grid-template-columns: 1fr; }
 }
+
+/* Below 760px there is no room for a sidebar column: the navigation stacks above
+   the page, and the page scrolls as a whole. The window's minimum width is 960px,
+   so this only applies to a narrow browser or a resized preview. */
+@media (max-width: 760px) {
+  #app { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 100vh; }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--hairline); }
+  .main { min-height: 0; }
+  .content { overflow: visible; }
+}
