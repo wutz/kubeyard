@@ -481,23 +481,22 @@ Cards are rectangles at 12–16px radius; marketing buttons and category tabs ar
 
 ### 主题色
 
-- 主题色选 **Indigo** `{colors.accent}` #4f46e5：Kubeyard 管理的是 GPU/算力"资源池"，靛蓝在 ink-on-white 体系里足够克制，又能和"空闲/健康"绿色明确区分。用于：选中态、焦点环、主操作按钮（创建租户、安装组件）、GPU 使用率进度条。
-- `{colors.success}` #059669 只表达"空闲 / 就绪 / 健康"，例如资源池"19 / 24 空闲"、组件 Ready。
-- `{colors.warning}` 表达排队、Pending、被抢占中；`{colors.error}` 表达失败、驱逐、不可达。
+- 主题色选 **Indigo** `{colors.accent}` #4f46e5：Kubeyard 管理的是集群中的组件，靛蓝在 ink-on-white 体系里足够克制，又能和"就绪/健康"绿色明确区分。用于：选中态、焦点环、主操作按钮（安装、确认）。
+- `{colors.success}` #059669 只表达"已安装 / 就绪 / 健康"，例如组件"已安装"、Flux 条件 Ready。
+- `{colors.warning}` 表达 Flux 协调中、尚未就绪；`{colors.error}` 表达失败、不可达、卸载等危险操作的确认按钮。
 - 不使用 hero mesh gradient，客户端里没有营销 hero。
 
 ### 布局
 
-- 左侧 Sidebar（`{colors.sidebar}` 底色，选中项 `{colors.sidebar-active}` + 6px 圆角），顶部为"集群 / 项目(租户)"两个下拉选择器，下面按分组列出导航；底部是主题切换（自动 / 浅色 / 深色）。
-- 右侧内容区：面包屑 + 页面标题 + 刷新频率提示（"实时 · 每 8 秒"）+ 右上角刷新按钮。
-- 概览页：顶部 4 张指标卡（`feature-card`，12px 圆角，1px hairline），下方 2 列卡片网格（资源池、配额、最近任务、存储）。
+- 左侧 Sidebar（`{colors.sidebar}` 底色，选中项 `{colors.sidebar-active}` + 6px 圆角），顶部为"集群"下拉选择器，下面按分组列出导航（目前只有"管理 / 组件"）；底部是主题切换（自动 / 浅色 / 深色）。
+- 右侧内容区：顶部栏只放刷新按钮；页面标题与副标题在内容区顶部。不做自动刷新，不显示刷新频率。
+- 组件页：页头，源面板（Flux 与 catalog 源的状态与操作，1px hairline 卡片，12px 圆角），组件表格，选中组件的详情卡片（Flux 状态、参数表单、安装 / 更新参数 / 卸载）。
 - 所有交互控件使用 6px 方形按钮（`button-primary-sm` / `button-ghost-sm`），客户端里不出现 pill 按钮。
 
 ### 数据可视化
 
-- 进度条：4px 高、全圆角，轨道 `{colors.hairline-soft}`，填充按语义取 accent / success / warning / error。
-- 实例/节点规格名用 Geist Mono（如 `rtx-5090.x8`），旁边用灰底 6px 圆角的 tag 展示 GPU 型号。
-- 数字指标用 `heading-lg`，分母与说明用 `{colors.mute}`。
+- 状态标签：已安装用 success 色，其余状态用中性灰（`{colors.hairline-soft}` 底色）；Flux 条件的 Ready 与未就绪分别用 success 与 error 文字色。
+- 组件名、版本与参数路径用 Geist Mono（如 `gpu-operator`、`v25.10.1`、`driver.enabled`）。
 - 空状态居中：一行 `label-sm` 标题 + 一行 `body-sm` 引导文案，不放插画。
 
 ### 深色模式
@@ -506,5 +505,5 @@ Cards are rectangles at 12–16px radius; marketing buttons and category tabs ar
 
 ### 图标（Logo）
 
-- 应用图标源文件为 `gui/build/appicon.svg`，导出为 1024px 的 `gui/build/appicon.png`。圆角方形（`rx` 232）底色为 `{colors.accent}`，白色的 K 由一根竖线、两根斜线和五个节点组成，节点代表集群与资源池。
+- 应用图标源文件为 `gui/build/appicon.svg`，导出为 1024px 的 `gui/build/appicon.png`。圆角方形（`rx` 232）底色为 `{colors.accent}`，白色的 K 由一根竖线、两根斜线和五个节点组成，节点代表集群中的组件。
 - 图标只使用主题色与白色，不加渐变、阴影或文字。界面内不重复放置 logo，侧边栏顶部只保留收起按钮。

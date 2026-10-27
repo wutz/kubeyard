@@ -1,32 +1,42 @@
 # Kubeyard
 
-用一个桌面客户端管理 GPU Kubernetes 集群：平台管理员在底层集群上开通虚拟集群、分配独占节点、计量用量；虚拟集群管理员在自己的 VC 内安装 AI 组件，并为普通用户开通可撤销的 kubeconfig。
+用一个桌面客户端管理 Kubernetes 集群的组件：通过 Flux 从签名的 OCI catalog 安装、更新、卸载基础组件与 AI 组件（nfd、gpu-operator、istio、cert-manager…），并查看每个组件的 Flux 状态与事件。
 
-> 状态：架构设计阶段，尚未开始编码。设计评审通过后进入 M1。
+> 状态：M1 已完成。范围只包括 Flux 与组件安装管理；虚拟集群、资源池、抢占与计量已移除，历史见 [路线图](docs/roadmap.md)。
 
-## 三种角色，一个客户端
+## 功能
 
-| 角色 | 连接对象 | 能做什么 |
-|---|---|---|
-| 平台管理员 | 底层（host）k8s 集群 | 安装 Flux 与基础组件（nfd、spegel、metallb、istio、cert-manager、gpu-operator…）；开通虚拟集群；管理节点资源池、优先级与抢占；查看计量；导出管理员 kubeconfig |
-| 虚拟集群管理员 | 自己的虚拟集群（vcluster） | 安装 kueue、trainer v2、agent-sandbox 等；为用户开通 namespace 级 kubeconfig（RBAC + quota + networkpolicy），也可撤销 |
-| 用户 | 虚拟集群中的 namespace | 用 kubectl 或 Kubeyard 查看自己空间的资源与配额 |
+- **集群**：读取本地 kubeconfig 的所有 context，侧边栏切换当前集群
+- **Flux**：未安装时一键安装 flux-operator 与 FluxInstance；已有 Flux 时拒绝，不接管其他方式安装的 Flux
+- **catalog 源**：添加默认的 OCI catalog（`ghcr.io/wutz/kubeyard-catalog`，cosign 校验）；源未经校验时不显示组件
+- **组件**：浏览 catalog，按 schema 填写参数，安装 / 更新参数 / 卸载；Kubeyard 管理的组件可查看 Flux 的 conditions 与最近事件
+- **守卫**：安装与卸载在写入前用集群的最新状态复查，依赖未就绪、已存在的非 Helm 组件、非 Kubeyard 安装的组件都会被拒绝
 
 ## 核心组件
 
-- **Kubeyard GUI**：基于 [Wails](https://wails.io) v2 的桌面客户端，页面与 Go 后端经 Wails 绑定通信（不开端口），直接用 kubeconfig 访问 API Server，无需额外服务端
-- **kubeyard-operator**：在集群内协调虚拟集群、节点租约、抢占、计量与用户空间（API Group `kubeyard.wutz.dev`）
-- **kubeyard-catalog**：以签名 OCI artifact 发布到 GHCR 的 Flux 组件目录，默认源基于 [k8s-in-action](https://github.com/wutz/k8s-in-action)，其他组织可发布自己的源
+- **Kubeyard GUI**：基于 [Wails](https://wails.io) v2 的桌面客户端（`gui/`）。页面通过 Wails 绑定调用 Go 的 `App` 方法，不开端口，直接用 kubeconfig 访问 API Server，没有后端服务
+- **pkg/kube、pkg/catalog**：读取 kubeconfig、安装 Flux 与 catalog 源、解析 catalog 并执行安装守卫
+- **kubeyard-catalog**：以签名 OCI artifact 发布到 GHCR 的 Flux 组件目录，默认源基于 [k8s-in-action](https://github.com/wutz/k8s-in-action)，其他组织可以发布自己的源
 
 ## 文档
 
 - [架构总览](docs/architecture.md)
-- [Catalog 与 Flux 源](docs/catalog.md)
-- [虚拟集群与资源池](docs/virtual-cluster.md)
-- [Operator 设计（CRD、调度、抢占、计量、凭证）](docs/operator.md)
-- [GUI 设计（信息架构与页面）](docs/gui.md)
+- [Catalog 与 Flux 安装模型](docs/catalog.md)
+- [GUI 设计](docs/gui.md)
 - [路线图](docs/roadmap.md)
 - [视觉规范](DESIGN.md)
+
+## 开发
+
+```bash
+go vet ./...
+go test ./...
+go build -tags production -o kubeyard-gui ./gui
+```
+
+GUI 使用 cgo 与系统 webview，构建需求见 [GUI 设计](docs/gui.md) §5。
+
+读取真实集群的测试默认跳过。设置 `KUBEYARD_LIVE_CONTEXT` 为 kubeconfig 中的 context 名即可运行 `TestLiveCatalog`。写入路径的测试 `TestLiveWritePath`（`gui/live_write_test.go`）会安装与卸载组件，设置 `KUBEYARD_LIVE_WRITE` 为一个可丢弃集群的 context 名才会运行。
 
 ## 许可
 

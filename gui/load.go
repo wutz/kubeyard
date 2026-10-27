@@ -6,16 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/wutz/kubeyard/pkg/api/v1alpha1"
 	"github.com/wutz/kubeyard/pkg/catalog"
 	"github.com/wutz/kubeyard/pkg/kube"
 )
@@ -55,15 +49,6 @@ func runAction(contextName string, timeout time.Duration, fn action) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return fn(ctx, cfg, cs, dc)
-}
-
-// loadOverview reads the nodes and pods of a context.
-func loadOverview(ctx context.Context, contextName string) (kube.Overview, error) {
-	_, cs, _, err := clients(contextName)
-	if err != nil {
-		return kube.Overview{}, err
-	}
-	return kube.Load(ctx, cs)
 }
 
 // loadCatalog reads the catalog served by the context's source, and the state
@@ -175,79 +160,4 @@ func helmReleaseNames(ad catalog.Addon) []string {
 		}
 	}
 	return names
-}
-
-// The Kubeyard resources the resource pool page reads. Both are cluster-scoped.
-var (
-	nodePoolResource       = v1alpha1.SchemeGroupVersion.WithResource("nodepools")
-	virtualClusterResource = v1alpha1.SchemeGroupVersion.WithResource("virtualclusters")
-	nodeLeaseResource      = v1alpha1.SchemeGroupVersion.WithResource("nodeleases")
-)
-
-// loadPools reads the NodePools of a context and the VirtualClusters that claim
-// them. A cluster without the Kubeyard CRDs is not an error: the view reports
-// that the operator is not installed.
-func loadPools(ctx context.Context, contextName string) (poolsView, error) {
-	_, cs, dc, err := clients(contextName)
-	if err != nil {
-		return poolsView{}, err
-	}
-	var pools v1alpha1.NodePoolList
-	if err := listKubeyard(ctx, dc, nodePoolResource, &pools); err != nil {
-		if missingCRD(err) {
-			return toPoolsView(false, nil, nil, nil, nil), nil
-		}
-		return poolsView{}, fmt.Errorf("读取 NodePool 失败：%w", err)
-	}
-	var claims v1alpha1.VirtualClusterList
-	if err := listKubeyard(ctx, dc, virtualClusterResource, &claims); err != nil && !missingCRD(err) {
-		return poolsView{}, fmt.Errorf("读取 VirtualCluster 失败：%w", err)
-	}
-	var leases v1alpha1.NodeLeaseList
-	if err := listKubeyard(ctx, dc, nodeLeaseResource, &leases); err != nil && !missingCRD(err) {
-		return poolsView{}, fmt.Errorf("读取节点租约失败：%w", err)
-	}
-	nodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return poolsView{}, fmt.Errorf("读取节点失败：%w", err)
-	}
-	return toPoolsView(true, pools.Items, claims.Items, nodes.Items, leases.Items), nil
-}
-
-// loadVirtualClusters reads the VirtualClusters of a context, with the pool
-// display names their claims refer to. A cluster without the Kubeyard CRDs is
-// not an error: the view reports that the operator is not installed.
-func loadVirtualClusters(ctx context.Context, contextName string) (virtualClustersView, error) {
-	_, _, dc, err := clients(contextName)
-	if err != nil {
-		return virtualClustersView{}, err
-	}
-	var vcs v1alpha1.VirtualClusterList
-	if err := listKubeyard(ctx, dc, virtualClusterResource, &vcs); err != nil {
-		if missingCRD(err) {
-			return toVirtualClustersView(false, nil, nil), nil
-		}
-		return virtualClustersView{}, fmt.Errorf("读取 VirtualCluster 失败：%w", err)
-	}
-	var pools v1alpha1.NodePoolList
-	if err := listKubeyard(ctx, dc, nodePoolResource, &pools); err != nil && !missingCRD(err) {
-		return virtualClustersView{}, fmt.Errorf("读取 NodePool 失败：%w", err)
-	}
-	return toVirtualClustersView(true, vcs.Items, pools.Items), nil
-}
-
-// listKubeyard lists a cluster-scoped resource and decodes the result into list,
-// a pointer to one of the pkg/api list types.
-func listKubeyard(ctx context.Context, dc dynamic.Interface, gvr schema.GroupVersionResource, list any) error {
-	items, err := dc.Resource(gvr).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-	return runtime.DefaultUnstructuredConverter.FromUnstructured(items.UnstructuredContent(), list)
-}
-
-// missingCRD reports whether the API server does not serve the resource, which
-// is how a cluster without the Kubeyard operator answers.
-func missingCRD(err error) bool {
-	return apierrors.IsNotFound(err) || meta.IsNoMatchError(err)
 }

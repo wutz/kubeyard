@@ -3,7 +3,6 @@ package main
 import (
 	"testing"
 
-	"github.com/wutz/kubeyard/pkg/api/v1alpha1"
 	"github.com/wutz/kubeyard/pkg/catalog"
 )
 
@@ -94,84 +93,5 @@ func TestShortRevision(t *testing.T) {
 		if got := shortRevision(in); got != want {
 			t.Errorf("shortRevision(%q) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-func testPool(name, display string, total, free, reserved, unhealthy int32) v1alpha1.NodePool {
-	p := v1alpha1.NodePool{}
-	p.Name = name
-	p.Spec.DisplayName = display
-	p.Status = v1alpha1.NodePoolStatus{Total: total, Free: free, Reserved: reserved, Unhealthy: unhealthy}
-	return p
-}
-
-func testVC(name, display string, claims ...v1alpha1.PoolClaim) v1alpha1.VirtualCluster {
-	vc := v1alpha1.VirtualCluster{}
-	vc.Name = name
-	vc.Spec.DisplayName = display
-	vc.Spec.PoolClaims = claims
-	return vc
-}
-
-func TestToPoolsViewCountsAndClaims(t *testing.T) {
-	pools := []v1alpha1.NodePool{
-		testPool("rtx-5090-x8", "rtx-5090.x8", 24, 19, 4, 1),
-		testPool("a100-x8", "", 8, 0, 0, 0),
-	}
-	vcs := []v1alpha1.VirtualCluster{
-		testVC("beta", "Beta", v1alpha1.PoolClaim{Pool: "rtx-5090-x8", Min: 2, Max: 6, Desired: 3}),
-		testVC("acme", "ACME 生产", v1alpha1.PoolClaim{Pool: "rtx-5090-x8", Min: 2, Max: 8, Desired: 4}, v1alpha1.PoolClaim{Pool: "missing", Min: 1, Max: 1}),
-	}
-
-	got := toPoolsView(true, pools, vcs, nil, nil)
-	if !got.Installed {
-		t.Fatalf("Installed = false, want true")
-	}
-	if len(got.Pools) != 2 || got.Pools[0].Name != "a100-x8" || got.Pools[1].Name != "rtx-5090-x8" {
-		t.Fatalf("pools = %+v, want a100-x8 then rtx-5090-x8", got.Pools)
-	}
-
-	a100 := got.Pools[0]
-	if a100.Claims == nil || len(a100.Claims) != 0 {
-		t.Errorf("a100 claims = %+v, want an empty non-nil list", a100.Claims)
-	}
-
-	rtx := got.Pools[1]
-	if rtx.DisplayName != "rtx-5090.x8" || rtx.Total != 24 || rtx.Free != 19 || rtx.Reserved != 4 || rtx.Unhealthy != 1 {
-		t.Errorf("rtx counts = %+v", rtx)
-	}
-	want := []claimView{
-		{VirtualCluster: "acme", DisplayName: "ACME 生产", Min: 2, Max: 8, Desired: 4},
-		{VirtualCluster: "beta", DisplayName: "Beta", Min: 2, Max: 6, Desired: 3},
-	}
-	if len(rtx.Claims) != len(want) {
-		t.Fatalf("rtx claims = %+v, want %+v", rtx.Claims, want)
-	}
-	for i := range want {
-		if rtx.Claims[i] != want[i] {
-			t.Errorf("claim %d = %+v, want %+v", i, rtx.Claims[i], want[i])
-		}
-	}
-}
-
-func TestToPoolsViewEmpty(t *testing.T) {
-	got := toPoolsView(true, nil, nil, nil, nil)
-	if !got.Installed {
-		t.Errorf("Installed = false, want true when the CRD is served")
-	}
-	if got.Pools == nil || len(got.Pools) != 0 {
-		t.Errorf("pools = %#v, want an empty non-nil list", got.Pools)
-	}
-}
-
-func TestToPoolsViewNotInstalled(t *testing.T) {
-	// Objects that might be left over are ignored when the CRD is not served.
-	pools := []v1alpha1.NodePool{testPool("rtx-5090-x8", "", 1, 1, 0, 0)}
-	got := toPoolsView(false, pools, nil, nil, nil)
-	if got.Installed {
-		t.Errorf("Installed = true, want false")
-	}
-	if got.Pools == nil || len(got.Pools) != 0 {
-		t.Errorf("pools = %#v, want an empty non-nil list", got.Pools)
 	}
 }
